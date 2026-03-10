@@ -3,3 +3,5 @@ __pycache__/
 *.bak
 *.ps1
 *.bat
+token_linkedin.pickle
+.env
