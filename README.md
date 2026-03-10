@@ -1,61 +1,61 @@
 # MyCRM-LinkedIn
 
-Автоматизированная система управления взаимодействиями (CRM) для LinkedIn. Позволяет парсить переписки, генерировать персонализированные ответы с помощью ИИ и автоматизировать рассылку сообщений через Google Sheets.
+An automated Customer Relationship Management (CRM) system for LinkedIn. It allows you to scrape conversations, generate personalized AI-driven responses, and automate messaging through Google Sheets.
 
-## Основные возможности
+## Key Features
 
-- **Сбор переписок (Scrape)**: Извлечение данных о последних диалогах в LinkedIn и их синхронизация с Google Таблицей.
-- **Генерация ответов (Draft)**: Использование ИИ (Google Gemini) для создания черновиков ответов на основе контекста переписки.
-- **Рассылка (Send)**: Автоматическая отправка подготовленных сообщений лидам прямо из Google Таблицы.
-- **Stealth-режим**: Использование Playwright с библиотекой stealth для минимизации риска обнаружения автоматизации.
-- **Интеграция с Google Sheets**: Удобное управление базой контактов и статусами взаимодействия в реальном времени.
+- **Conversation Scraping**: Extract data from recent LinkedIn dialogues and synchronize it with a Google Sheet.
+- **AI Response Generation**: Use Google Gemini AI to create response drafts based on conversation context.
+- **Automated Messaging**: Send prepared messages to leads directly from Google Sheets.
+- **Stealth Mode**: Built with Playwright and the `playwright-stealth` library to minimize detection risks.
+- **Google Sheets Integration**: Manage contact bases and interaction statuses in real-time.
 
-## Установка
+## Installation
 
-1. **Клонируйте репозиторий**:
+1. **Clone the repository**:
    ```bash
    git clone https://github.com/sb641/MyCRM-LinkedIn.git
    cd MyCRM-LinkedIn
    ```
 
-2. **Установите зависимости**:
+2. **Install dependencies**:
    ```bash
-   pip install playwright playwright-stealth google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client python-dotenv google-generativeai
+   pip install -r requirements.txt
    ```
 
-3. **Установите браузер Playwright**:
+3. **Install Playwright browsers**:
    ```bash
    playwright install chromium
    ```
 
-4. **Настройте переменные окружения**:
-   Создайте файл `.env` в корне проекта (или отредактируйте существующий) и заполните следующие поля:
+4. **Configure environment variables**:
+   Create a `.env` file in the root directory (or edit the existing one) and fill in the following fields:
    ```env
-   LINKEDIN_USERNAME=ваш_email
-   LINKEDIN_PASSWORD=ваш_пароль
-   SPREADSHEET_ID=ID_вашей_google_таблицы
-   GEMINI_API_KEY=ваш_ключ_gemini
-   USER_DATA_DIR=./user_data  # папка для сохранения сессии браузера
+   LINKEDIN_USERNAME=your_email
+   LINKEDIN_PASSWORD=your_password
+   SPREADSHEET_ID=your_google_sheet_id
+   GEMINI_API_KEY=your_gemini_api_key
+   USER_DATA_DIR=./user_data  # directory to save browser session
    ```
 
-5. **Настройка Google API**:
-   - Поместите файл `credentials.json` (от Service Account или OAuth) в корень проекта для доступа к Google Sheets.
-   - Подробности см. в [google_setup_guide.md](google_setup_guide.md).
+5. **Google API Setup**:
+   - Place your `credentials.json` (Service Account or OAuth) in the project root for Google Sheets access.
+   - For more details, see [google_setup_guide.md](google_setup_guide.md).
 
-## Использование
+## Usage
 
-Запустите проект с помощью команды:
+Run the project using:
 ```bash
 python main.py
 ```
-Или используйте готовые скрипты:
+Or use the provided scripts:
 - `start.bat` (Windows)
 - `start.ps1` (PowerShell)
 
-### Режимы работы:
-1. **Scrape**: Собирает новые сообщения и обновляет данные в таблице.
-2. **Draft**: Проходит по строкам в таблице, где нужен ответ, и создает черновик с помощью Gemini AI.
-3. **Send**: Отправляет сообщения тем контактам, у которых в колонке статуса стоит разрешение на отправку.
+### Operation Modes:
+1. **Scrape**: Collects new messages and updates the spreadsheet.
+2. **Draft**: Processes rows where a response is needed and generates a draft using Gemini AI.
+3. **Send**: Sends messages to contacts that have the required status in the spreadsheet.
 
-## Безопасность
-Проект использует локальное хранилище данных браузера (`USER_DATA_DIR`), чтобы сохранять сессию LinkedIn и избегать повторных логинов. Рекомендуется использовать прокси при работе с нескольких аккаунтов.
+## Security
+The project uses a local browser data directory (`USER_DATA_DIR`) to maintain your LinkedIn session and avoid frequent logins. Using a proxy is recommended when managing multiple accounts.
