@@ -7,6 +7,10 @@ vi.mock('@/lib/services/inbox-service', () => ({
   getContactConversationDetails: vi.fn()
 }));
 
+vi.mock('@/lib/services/browser-session-service', () => ({
+  getBrowserSession: vi.fn()
+}));
+
 vi.mock('@/lib/services/jobs-service', () => ({
   listSyncRuns: vi.fn(),
   listImportThreadJobs: vi.fn()
@@ -75,11 +79,23 @@ const details: ContactConversationDetailsDto = {
       approvedAt: null,
       sentAt: null,
       createdAt: 1
+    },
+    {
+      id: 'draft-002',
+      goalText: 'Share approved note',
+      approvedText: 'Approved follow-up ready to send',
+      draftStatus: 'approved',
+      sendStatus: 'idle',
+      modelName: 'mock-gemini',
+      approvedAt: 2,
+      sentAt: null,
+      createdAt: 2
     }
   ]
 };
 
 const inboxService = await import('@/lib/services/inbox-service');
+const browserSessionService = await import('@/lib/services/browser-session-service');
 const jobsService = await import('@/lib/services/jobs-service');
 
 const syncRuns: SyncRunDto[] = [
@@ -99,6 +115,12 @@ describe('HomePage', () => {
   it('renders the Phase 4 shell with CRM metadata and quick actions', async () => {
     vi.mocked(inboxService.listInboxItems).mockResolvedValue([inboxItem]);
     vi.mocked(inboxService.getContactConversationDetails).mockResolvedValue(details);
+    vi.mocked(browserSessionService.getBrowserSession).mockResolvedValue({
+      accountId: 'local-account',
+      cookiesJson: '[]',
+      capturedAt: 10,
+      userAgent: 'Chrome 123'
+    });
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue(syncRuns);
     vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([
       {
@@ -131,15 +153,20 @@ describe('HomePage', () => {
     expect(screen.getByLabelText('Sort conversations')).toBeInTheDocument();
     expect(screen.getByText('Generate with mock Gemini')).toBeInTheDocument();
     expect(screen.getByText('Follow-up')).toBeInTheDocument();
+    expect(screen.getByText('Approved follow-up ready to send')).toBeInTheDocument();
+    expect(screen.getByText('Queue send')).toBeInTheDocument();
     expect(screen.getByText('Recent sync runs')).toBeInTheDocument();
     expect(screen.getByText('2/3 imported')).toBeInTheDocument();
     expect(screen.getByText('Queue browser sync')).toBeInTheDocument();
     expect(screen.getByText('Active sync job')).toBeInTheDocument();
     expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
+    expect(screen.getByText('Saved browser session ready')).toBeInTheDocument();
+    expect(screen.getByText('Chrome 123')).toBeInTheDocument();
   });
 
   it('renders the error state when inbox loading fails', async () => {
     vi.mocked(inboxService.listInboxItems).mockRejectedValue(new Error('Inbox failed'));
+    vi.mocked(browserSessionService.getBrowserSession).mockResolvedValue(null);
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue([]);
     vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([]);
 

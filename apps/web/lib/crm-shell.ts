@@ -78,14 +78,23 @@ export type ShellDataState = {
   details: ConversationDetailsViewModel | null;
   syncRuns: SyncRunViewModel[];
   activeSyncJob: SyncJobViewModel | null;
+  browserSession: BrowserSessionViewModel | null;
   errorMessage: string | null;
   sort: InboxSortMode;
+};
+
+export type BrowserSessionViewModel = {
+  accountId: string;
+  statusLabel: string;
+  capturedAtLabel: string;
+  userAgentLabel: string;
 };
 
 export type SyncRunViewModel = SyncRunDto & {
   statusLabel: string;
   relativeStartedAt: string;
   summaryLabel: string;
+  operatorMessage: string | null;
 };
 
 export type SyncJobViewModel = {
@@ -96,6 +105,7 @@ export type SyncJobViewModel = {
   statusLabel: string;
   relativeUpdatedAt: string;
   lastError: string | null;
+  operatorMessage: string | null;
   auditCount: number;
 };
 
@@ -143,6 +153,11 @@ export function buildShellDataState(args: {
   details: ContactConversationDetailsDto | null;
   syncRuns?: SyncRunDto[];
   jobs?: JobWithAuditDto[];
+  browserSession?: {
+    accountId: string;
+    capturedAt: number;
+    userAgent?: string | null;
+  } | null;
   errorMessage?: string | null;
 }): ShellDataState {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
@@ -150,6 +165,7 @@ export function buildShellDataState(args: {
   const details = args.details ? buildConversationDetailsViewModel(args.details) : null;
   const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
   const activeSyncJob = buildActiveSyncJobViewModel(args.jobs ?? []);
+  const browserSession = buildBrowserSessionViewModel(args.browserSession ?? null);
 
   if (args.errorMessage) {
     return {
@@ -159,6 +175,7 @@ export function buildShellDataState(args: {
       details: null,
       syncRuns,
       activeSyncJob,
+      browserSession,
       errorMessage: args.errorMessage,
       sort: args.route.sort
     };
@@ -172,6 +189,7 @@ export function buildShellDataState(args: {
       details: null,
       syncRuns,
       activeSyncJob,
+      browserSession,
       errorMessage: null,
       sort: args.route.sort
     };
@@ -184,6 +202,7 @@ export function buildShellDataState(args: {
     details,
     syncRuns,
     activeSyncJob,
+    browserSession,
     errorMessage: null,
     sort: args.route.sort
   };
@@ -194,8 +213,26 @@ export function buildSyncRunViewModels(syncRuns: SyncRunDto[]): SyncRunViewModel
     ...syncRun,
     statusLabel: formatSyncRunStatus(syncRun.status),
     relativeStartedAt: formatRelativeTime(syncRun.startedAt),
-    summaryLabel: `${syncRun.itemsImported}/${syncRun.itemsScanned} imported`
+    summaryLabel: buildSyncRunSummary(syncRun),
+    operatorMessage: formatSyncOperatorMessage(syncRun.error)
   }));
+}
+
+export function buildBrowserSessionViewModel(session: {
+  accountId: string;
+  capturedAt: number;
+  userAgent?: string | null;
+} | null): BrowserSessionViewModel | null {
+  if (!session) {
+    return null;
+  }
+
+  return {
+    accountId: session.accountId,
+    statusLabel: 'Saved browser session ready',
+    capturedAtLabel: formatRelativeTime(session.capturedAt),
+    userAgentLabel: session.userAgent?.trim() || 'Unknown browser agent'
+  };
 }
 
 export function buildActiveSyncJobViewModel(jobs: JobWithAuditDto[]): SyncJobViewModel | null {
@@ -215,6 +252,7 @@ export function buildActiveSyncJobViewModel(jobs: JobWithAuditDto[]): SyncJobVie
     statusLabel: formatSyncJobStatus(activeJob.job.status),
     relativeUpdatedAt: formatRelativeTime(activeJob.job.updatedAt),
     lastError: activeJob.job.lastError,
+    operatorMessage: formatSyncOperatorMessage(activeJob.job.lastError),
     auditCount: activeJob.auditEntries.length
   };
 }
@@ -637,4 +675,34 @@ function formatRelativeTime(timestamp: number | null) {
 
   const diffDays = Math.floor(diffHours / 24);
   return `${diffDays}d ago`;
+}
+
+function buildSyncRunSummary(syncRun: SyncRunDto) {
+  const importedSummary = `${syncRun.itemsImported}/${syncRun.itemsScanned} imported`;
+
+  if (syncRun.status === 'failed' && syncRun.error) {
+    return `${importedSummary} before failure`;
+  }
+
+  if (syncRun.status === 'running') {
+    return `${importedSummary} so far`;
+  }
+
+  return importedSummary;
+}
+
+function formatSyncOperatorMessage(error: string | null) {
+  if (!error) {
+    return null;
+  }
+
+  if (/no saved browser session/i.test(error)) {
+    return 'Saved browser session required. Capture or refresh a session before retrying sync.';
+  }
+
+  if (/session expired|session invalid|auth/i.test(error)) {
+    return 'Saved browser session looks stale. Refresh the session bootstrap, then retry sync.';
+  }
+
+  return 'Browser sync needs operator attention. Review the latest worker error before retrying.';
 }

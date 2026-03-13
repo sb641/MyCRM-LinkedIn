@@ -2,14 +2,17 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createBrowserSyncProvider,
+  createFileSessionStore,
   FakeMessagingProvider,
   InMemorySessionStore,
   MockMessagingProvider,
   PlaywrightMessagingProvider,
   parseThreadFixture,
+  sendBrowserMessage,
   runImportThreads,
   runFakeImportThreads
 } from './index';
+import path from 'node:path';
 
 const sampleFixture = `
   <section
@@ -64,6 +67,26 @@ describe('automation package', () => {
       accountId: 'account-1',
       cookiesJson: '[]',
       userAgent: 'test-agent',
+      capturedAt: 1735689600000
+    });
+  });
+
+  it('stores and loads session state on disk', async () => {
+    const store = createFileSessionStore(
+      path.resolve(import.meta.dirname, `./tmp-sessions-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    );
+
+    await store.save({
+      accountId: 'account-file-1',
+      cookiesJson: '[{"name":"li_at"}]',
+      userAgent: 'file-agent',
+      capturedAt: 1735689600000
+    });
+
+    await expect(store.load('account-file-1')).resolves.toEqual({
+      accountId: 'account-file-1',
+      cookiesJson: '[{"name":"li_at"}]',
+      userAgent: 'file-agent',
       capturedAt: 1735689600000
     });
   });
@@ -124,6 +147,48 @@ describe('automation package', () => {
       itemsScanned: 1,
       itemsImported: 1,
       threadIds: ['thread-import-001']
+    });
+  });
+
+  it('rejects browser send when real send is disabled', async () => {
+    await expect(
+      sendBrowserMessage(
+        {
+          draftId: 'draft-001',
+          conversationId: 'conversation-001',
+          accountId: 'local-account',
+          provider: 'linkedin-browser',
+          messageText: 'Approved message'
+        },
+        {
+          enableRealBrowserSync: true,
+          enableRealSend: false,
+          sessionStore: new InMemorySessionStore()
+        }
+      )
+    ).rejects.toThrow(/real send is disabled/i);
+  });
+
+  it('returns a deterministic fake send result when real send is enabled for the fake provider', async () => {
+    await expect(
+      sendBrowserMessage(
+        {
+          draftId: 'draft-003',
+          conversationId: 'conversation-003',
+          accountId: 'local-account',
+          provider: 'fake-linkedin',
+          messageText: 'Approved fake send'
+        },
+        {
+          enableRealBrowserSync: false,
+          enableRealSend: true
+        }
+      )
+    ).resolves.toMatchObject({
+      provider: 'fake-linkedin',
+      accountId: 'local-account',
+      draftId: 'draft-003',
+      conversationId: 'conversation-003'
     });
   });
 });

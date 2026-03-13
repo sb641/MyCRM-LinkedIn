@@ -6,7 +6,7 @@ import { NotFoundError, ValidationError } from '@mycrm/core';
 import { createDb } from '@mycrm/db';
 import { runMigrations } from '../../../../packages/db/src/migrate';
 import { seedDatabase } from '../../../../packages/db/src/seed';
-import { approveDraft, updateContactRelationshipStatus } from './crm-service';
+import { approveDraft, queueApprovedDraftSend, updateContactRelationshipStatus } from './crm-service';
 
 function createTempDbUrl(name: string) {
   const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mycrm-phase2-write-')), `${name}.sqlite`);
@@ -57,4 +57,67 @@ describe('crm service', () => {
 
     await expect(approveDraft('missing-draft', { approvedText: 'x', sendStatus: 'idle' }, databaseUrl)).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  it('queues send_message for an approved draft', async () => {
+    const databaseUrl = createTempDbUrl('queue-send');
+    await runMigrations(databaseUrl);
+    await seedDatabase(databaseUrl);
+
+    const result = await queueApprovedDraftSend(
+      {
+        draftId: 'draft-003',
+        conversationId: 'conversation-003',
+        accountId: 'local-account',
+        provider: 'linkedin-browser'
+      },
+      databaseUrl
+    );
+    const { sqlite } = await createDb(databaseUrl);
+    const [row] = await sqlite.all<{ type: string; payload: string; status: string }>(
+      "SELECT type, payload, status FROM jobs WHERE id = '" + result.jobId + "'"
+    );
+    await sqlite.close();
+
+    expect(result.status).toBe('queued');
+    expect(row?.type).toBe('send_message');
+    expect(row?.status).toBe('queued');
+    expect(row?.payload).toContain('draft-003');
+  });
+
+  it('reuses an existing queued send_message job for the same approved draft', async () => {
+    const databaseUrl = createTempDbUrl('queue-send-dedupe');
+    await runMigrations(databaseUrl);
+    await seedDatabase(databaseUrl);
+
+    const first = await queueApprovedDraftSend(
+      {
+        draftId: 'draft-003',
+        conversationId: 'conversation-003',
+        accountId: 'local-account',
+        provider: 'linkedin-browser'
+      },
+      databaseUrl
+    );
+
+    const second = await queueApprovedDraftSend(
+      {
+        draftId: 'draft-003',
+        conversationId: 'conversation-003',
+        accountId: 'local-account',
+        provider: 'linkedin-browser'
+      },
+      databaseUrl
+    );
+
+    const { sqlite } = await createDb(databaseUrl);
+    const rows = await sqlite.all<{ id: string; status: string }>(
+      "SELECT id, status FROM jobs WHERE type = 'send_message' AND json_extract(payload, '$.draftId') = 'draft-003' ORDER BY created_at ASC"
+    );
+    await sqlite.close();
+
+    expect(second.jobId).toBe(first.jobId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe('queued');
+  });
+
 });

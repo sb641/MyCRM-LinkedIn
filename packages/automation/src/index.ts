@@ -1,5 +1,13 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import { sampleContact } from '@mycrm/test-fixtures';
-import { importThreadsPayloadSchema, importThreadsResultSchema } from '@mycrm/core';
+import {
+  importThreadsPayloadSchema,
+  importThreadsResultSchema,
+  sendMessagePayloadSchema,
+  sendMessageResultSchema
+} from '@mycrm/core';
 
 export interface ThreadSummary {
   id: string;
@@ -38,10 +46,12 @@ export interface ParsedThreadFixture {
 export interface MessagingProvider {
   listThreads(): Promise<ThreadSummary[]>;
   getThreadMessages(threadId: string): Promise<MessageRecord[]>;
+  sendMessage?(threadId: string, message: string): Promise<{ sentAt: number }>;
 }
 
 export type BrowserSyncOptions = {
   enableRealBrowserSync: boolean;
+  enableRealSend?: boolean;
   sessionStore?: SessionStore;
 };
 
@@ -55,6 +65,38 @@ export class InMemorySessionStore implements SessionStore {
   async save(session: SessionState): Promise<void> {
     this.sessions.set(session.accountId, session);
   }
+}
+
+export class FileSessionStore implements SessionStore {
+  constructor(private readonly rootDir: string) {}
+
+  private getSessionPath(accountId: string) {
+    const safeAccountId = accountId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return path.join(this.rootDir, `${safeAccountId}.json`);
+  }
+
+  async load(accountId: string): Promise<SessionState | null> {
+    try {
+      const raw = await fs.readFile(this.getSessionPath(accountId), 'utf8');
+      return JSON.parse(raw) as SessionState;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null;
+      }
+
+      throw error;
+    }
+  }
+
+  async save(session: SessionState): Promise<void> {
+    await fs.mkdir(this.rootDir, { recursive: true });
+    await fs.writeFile(this.getSessionPath(session.accountId), JSON.stringify(session, null, 2), 'utf8');
+  }
+}
+
+export function createFileSessionStore(rootDir?: string) {
+  const sessionRoot = rootDir ?? path.resolve(process.cwd(), '.mycrm', 'sessions');
+  return new FileSessionStore(sessionRoot);
 }
 
 export function parseThreadFixture(html: string): ParsedThreadFixture {
@@ -97,6 +139,10 @@ export class FakeMessagingProvider implements MessagingProvider {
   async getThreadMessages(threadId: string): Promise<MessageRecord[]> {
     return this.fixtures.find((fixture) => fixture.thread.id === threadId)?.messages ?? [];
   }
+
+  async sendMessage(_threadId: string, _message: string): Promise<{ sentAt: number }> {
+    return { sentAt: Date.now() };
+  }
 }
 
 export class MockMessagingProvider implements MessagingProvider {
@@ -135,6 +181,10 @@ export class PlaywrightMessagingProvider implements MessagingProvider {
 
   async getThreadMessages(): Promise<MessageRecord[]> {
     throw new Error(`Playwright provider is not implemented yet for account ${this.session.accountId}.`);
+  }
+
+  async sendMessage(_threadId: string, _message: string): Promise<{ sentAt: number }> {
+    throw new Error(`Playwright send is not implemented yet for account ${this.session.accountId}.`);
   }
 }
 
@@ -205,5 +255,51 @@ export async function runImportThreads(payload: unknown, options: BrowserSyncOpt
     itemsScanned: threads.length,
     itemsImported: threads.length,
     threadIds: threads.map((thread) => thread.id)
+  });
+}
+
+export async function sendBrowserMessage(payload: unknown, options: BrowserSyncOptions) {
+  const parsed = sendMessagePayloadSchema.parse(payload);
+
+  if (!options.enableRealSend) {
+    throw new Error('Real send is disabled. Enable ENABLE_REAL_SEND to use browser-backed sending.');
+  }
+
+  if (parsed.provider === 'fake-linkedin') {
+    const provider = new FakeMessagingProvider([defaultImportFixture]);
+    const result = await provider.sendMessage?.(parsed.conversationId, parsed.messageText);
+
+    return sendMessageResultSchema.parse({
+      provider: parsed.provider,
+      accountId: parsed.accountId,
+      draftId: parsed.draftId,
+      conversationId: parsed.conversationId,
+      sentAt: result?.sentAt ?? Date.now()
+    });
+  }
+
+  const provider = await createBrowserSyncProvider(
+    {
+      provider: parsed.provider,
+      accountId: parsed.accountId
+    },
+    {
+      enableRealBrowserSync: options.enableRealBrowserSync,
+      sessionStore: options.sessionStore
+    }
+  );
+
+  if (!provider.sendMessage) {
+    throw new Error(`Messaging provider does not support send for account ${parsed.accountId}.`);
+  }
+
+  const result = await provider.sendMessage(parsed.conversationId, parsed.messageText);
+
+  return sendMessageResultSchema.parse({
+    provider: parsed.provider,
+    accountId: parsed.accountId,
+    draftId: parsed.draftId,
+    conversationId: parsed.conversationId,
+    sentAt: result.sentAt
   });
 }

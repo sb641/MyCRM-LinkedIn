@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ContactConversationDetailsDto, InboxItemDto, JobWithAuditDto } from '@mycrm/core';
 import {
   buildActiveSyncJobViewModel,
+  buildBrowserSessionViewModel,
   buildConversationDetailsViewModel,
   buildInboxListItems,
   buildShellDataState,
@@ -236,5 +237,83 @@ describe('crm shell state', () => {
 
     expect(state.activeSyncJob?.statusLabel).toBe('Retry scheduled');
     expect(state.activeSyncJob?.lastError).toContain('No saved browser session');
+    expect(state.activeSyncJob?.operatorMessage).toBe(
+      'Saved browser session required. Capture or refresh a session before retrying sync.'
+    );
+  });
+
+  it('builds browser session readiness metadata for the shell', () => {
+    const session = buildBrowserSessionViewModel({
+      accountId: 'local-account',
+      capturedAt: Date.now() - 60_000,
+      userAgent: 'Chrome 123'
+    });
+
+    expect(session).toMatchObject({
+      accountId: 'local-account',
+      statusLabel: 'Saved browser session ready',
+      userAgentLabel: 'Chrome 123'
+    });
+    expect(session?.capturedAtLabel).toBeTruthy();
+  });
+
+  it('includes browser session state in the shell data model', () => {
+    const state = buildShellDataState({
+      inbox: [inboxItem],
+      route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
+      details,
+      syncRuns: [
+        {
+          id: 'sync-001',
+          provider: 'linkedin-browser',
+          status: 'failed',
+          startedAt: 1,
+          finishedAt: 2,
+          itemsScanned: 4,
+          itemsImported: 1,
+          error: 'Session expired'
+        }
+      ],
+      browserSession: {
+        accountId: 'local-account',
+        capturedAt: Date.now() - 60_000,
+        userAgent: 'Chrome 123'
+      }
+    });
+
+    expect(state.browserSession?.accountId).toBe('local-account');
+    expect(state.syncRuns[0]?.summaryLabel).toBe('1/4 imported before failure');
+    expect(state.syncRuns[0]?.operatorMessage).toBe(
+      'Saved browser session looks stale. Refresh the session bootstrap, then retry sync.'
+    );
+  });
+
+  it('falls back to a generic operator sync message for unknown failures', () => {
+    const state = buildShellDataState({
+      inbox: [inboxItem],
+      route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
+      details,
+      jobs: [
+        {
+          job: {
+            id: 'job-002',
+            type: 'import_threads',
+            status: 'running',
+            payload: JSON.stringify({ accountId: 'browser-account', provider: 'linkedin-browser' }),
+            attemptCount: 1,
+            lockedAt: null,
+            lastError: 'Unexpected browser crash',
+            scheduledFor: null,
+            createdAt: 1,
+            updatedAt: 2
+          },
+          auditEntries: []
+        }
+      ]
+    });
+
+    expect(state.activeSyncJob?.operatorMessage).toBe(
+      'Browser sync needs operator attention. Review the latest worker error before retrying.'
+    );
   });
 });

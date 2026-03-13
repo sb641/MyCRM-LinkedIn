@@ -295,6 +295,108 @@ export function createMutationRepository(db: DatabaseClient, sqlite: SqliteConne
       return 1;
     },
 
+    async markDraftSent(draftId: string, sentAt?: number) {
+      const safeDraftId = draftId.replace(/'/g, "''");
+      const now = sentAt ?? Date.now();
+      const rows = await sqlite.all<{ id: string; contactId: string }>(`
+        SELECT id, contact_id AS contactId
+        FROM drafts
+        WHERE id = '${safeDraftId}'
+        LIMIT 1
+      `);
+      const existing = rows[0];
+
+      if (!existing) {
+        return 0;
+      }
+
+      await sqlite.exec(`
+        UPDATE drafts
+        SET send_status = 'sent',
+            sent_at = ${now}
+        WHERE id = '${safeDraftId}'
+      `);
+
+      const safeContactId = existing.contactId.replace(/'/g, "''");
+      await sqlite.exec(`
+        UPDATE contacts
+        SET last_sent_at = ${now},
+            updated_at = ${now}
+        WHERE id = '${safeContactId}'
+      `);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'draft',
+        entityId: draftId,
+        action: 'draft.sent',
+        payload: {
+          sendStatus: 'sent',
+          sentAt: now,
+          contactId: existing.contactId
+        }
+      });
+
+      return 1;
+    },
+
+    async markDraftSendFailed(draftId: string) {
+      const safeDraftId = draftId.replace(/'/g, "''");
+      const rows = await sqlite.all<{ id: string }>(`
+        SELECT id
+        FROM drafts
+        WHERE id = '${safeDraftId}'
+        LIMIT 1
+      `);
+      const existing = rows[0];
+
+      if (!existing) {
+        return 0;
+      }
+
+      await sqlite.exec(`
+        UPDATE drafts
+        SET send_status = 'failed'
+        WHERE id = '${safeDraftId}'
+      `);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'draft',
+        entityId: draftId,
+        action: 'draft.send_failed',
+        payload: {
+          sendStatus: 'failed'
+        }
+      });
+
+      return 1;
+    },
+
+    async findDraftForSend(draftId: string) {
+      const safeDraftId = draftId.replace(/'/g, "''");
+      const rows = await sqlite.all<{
+        id: string;
+        conversationId: string;
+        approvedText: string | null;
+        draftStatus: string;
+        sendStatus: string;
+        sentAt: number | null;
+      }>(`
+        SELECT
+          id,
+          conversation_id AS conversationId,
+          approved_text AS approvedText,
+          draft_status AS draftStatus,
+          send_status AS sendStatus,
+          sent_at AS sentAt
+        FROM drafts
+        WHERE id = '${safeDraftId}'
+        LIMIT 1
+      `);
+      const draft = rows[0];
+
+      return draft ?? null;
+    },
+
     async createGeneratedDraft(args: {
       draftId: string;
       contactId: string;
@@ -442,11 +544,29 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
     },
 
     async enqueueJob(type: JobType, payload: Record<string, unknown>, scheduledFor?: number | null) {
-      const jobId = `job-generated-${Date.now()}`;
+      const jobId = `job-generated-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
       const now = Date.now();
       const safeType = type.replace(/'/g, "''");
       const safePayload = JSON.stringify(payload).replace(/'/g, "''");
       const scheduledValue = scheduledFor ?? now;
+
+      if (type === 'send_message' && typeof payload.draftId === 'string') {
+        const safeDraftId = payload.draftId.replace(/'/g, "''");
+        const existingJobs = await sqlite.all<{ id: string }>(`
+          SELECT id
+          FROM jobs
+          WHERE type = 'send_message'
+            AND status IN ('queued', 'running', 'retry_scheduled')
+            AND json_extract(payload, '$.draftId') = '${safeDraftId}'
+          ORDER BY created_at ASC
+          LIMIT 1
+        `);
+        const existingJob = existingJobs[0];
+
+        if (existingJob) {
+          return { jobId: existingJob.id, status: 'queued' as const };
+        }
+      }
 
       await sqlite.exec(`
         INSERT INTO jobs (

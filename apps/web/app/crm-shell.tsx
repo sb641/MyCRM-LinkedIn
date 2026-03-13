@@ -22,6 +22,9 @@ export function CrmShell({ state, flags }: CrmShellProps) {
   const [generatedDraft, setGeneratedDraft] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isQueueingSend, setIsQueueingSend] = useState<string | null>(null);
+  const [sendMessage, setSendMessage] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
   const [syncAccountId, setSyncAccountId] = useState('local-account');
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -93,6 +96,41 @@ export function CrmShell({ state, flags }: CrmShellProps) {
       setSyncError(error instanceof Error ? error.message : 'Manual sync enqueue failed');
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function handleQueueSend(draftId: string) {
+    if (!state.details) {
+      return;
+    }
+
+    setIsQueueingSend(draftId);
+    setSendMessage(null);
+    setSendError(null);
+
+    try {
+      const response = await fetch(`/api/drafts/${draftId}/send`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          conversationId: state.details.conversation.id,
+          accountId: syncAccountId,
+          provider: 'linkedin-browser'
+        })
+      });
+
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? 'Unable to queue send');
+      }
+
+      setSendMessage(`Queued send job ${body.jobId}`);
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Unable to queue send');
+    } finally {
+      setIsQueueingSend(null);
     }
   }
 
@@ -313,9 +351,21 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                           <span className="subtle-pill">{draft.modelName ?? 'Manual'}</span>
                         </div>
                         <p>{draft.approvedText ?? draft.goalText}</p>
+                        {draft.draftStatus === 'approved' ? (
+                          <button
+                            className="ghost-button"
+                            type="button"
+                            onClick={() => handleQueueSend(draft.id)}
+                            disabled={isQueueingSend === draft.id}
+                          >
+                            {isQueueingSend === draft.id ? 'Queueing send...' : 'Queue send'}
+                          </button>
+                        ) : null}
                       </article>
                     ))
                   )}
+                  {sendMessage ? <p className="generated-draft-preview">{sendMessage}</p> : null}
+                  {sendError ? <p className="generated-draft-error">{sendError}</p> : null}
                 </section>
               </div>
             ) : (
@@ -357,6 +407,16 @@ export function CrmShell({ state, flags }: CrmShellProps) {
 
             <div className="stack-card">
               <p className="eyebrow">Manual browser sync</p>
+              {state.browserSession ? (
+                <div className="sync-session-summary" aria-label="Saved browser session">
+                  <p>{state.browserSession.statusLabel}</p>
+                  <p className="conversation-meta">{state.browserSession.accountId}</p>
+                  <p className="conversation-meta">Captured {state.browserSession.capturedAtLabel}</p>
+                  <p className="conversation-meta">{state.browserSession.userAgentLabel}</p>
+                </div>
+              ) : (
+                <p className="stack-copy">No saved browser session yet. Capture one before running real browser sync.</p>
+              )}
               <label className="draft-goal-field">
                 <span>Account ID</span>
                 <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
@@ -381,6 +441,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                   <p className="conversation-meta">{state.activeSyncJob.accountId} · {state.activeSyncJob.provider}</p>
                   <p className="conversation-meta">Updated {state.activeSyncJob.relativeUpdatedAt}</p>
                   <p className="conversation-meta">Audit entries: {state.activeSyncJob.auditCount}</p>
+                  {state.activeSyncJob.operatorMessage ? <p className="stack-copy">{state.activeSyncJob.operatorMessage}</p> : null}
                   {state.activeSyncJob.lastError ? <p className="generated-draft-error">{state.activeSyncJob.lastError}</p> : null}
                 </>
               ) : (
@@ -405,6 +466,8 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                       </div>
                       <p>{syncRun.provider}</p>
                       <p className="conversation-meta">{syncRun.summaryLabel}</p>
+                      {syncRun.finishedAt ? <p className="conversation-meta">Finished</p> : <p className="conversation-meta">Still running</p>}
+                      {syncRun.operatorMessage ? <p className="stack-copy">{syncRun.operatorMessage}</p> : null}
                       {syncRun.error ? <p className="generated-draft-error">{syncRun.error}</p> : null}
                     </article>
                   ))}

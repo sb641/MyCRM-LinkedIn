@@ -152,6 +152,36 @@ export const manualSyncRequestSchema = z.object({
   provider: z.string().min(1).default('linkedin-browser')
 });
 
+export const queueSendRequestSchema = z.object({
+  draftId: z.string().min(1),
+  conversationId: z.string().min(1),
+  accountId: z.string().min(1).default('local-account'),
+  provider: z.string().min(1).default('linkedin-browser')
+});
+
+export const sendMessagePayloadSchema = z.object({
+  draftId: z.string().min(1),
+  conversationId: z.string().min(1),
+  accountId: z.string().min(1),
+  provider: z.string().min(1).default('linkedin-browser'),
+  messageText: z.string().min(1)
+});
+
+export const sendMessageResultSchema = z.object({
+  provider: z.string().min(1),
+  accountId: z.string().min(1),
+  draftId: z.string().min(1),
+  conversationId: z.string().min(1),
+  sentAt: z.number().int().positive()
+});
+
+export const browserSessionSchema = z.object({
+  accountId: z.string().min(1),
+  cookiesJson: z.string().min(1),
+  userAgent: z.string().min(1),
+  capturedAt: z.number().int().positive().optional()
+});
+
 export const importThreadsResultSchema = z.object({
   provider: z.string().min(1),
   accountId: z.string().min(1),
@@ -190,3 +220,7 @@ export type ImportThreadsPayload = z.infer<typeof importThreadsPayloadSchema>;
 export type ImportThreadsResultDto = z.infer<typeof importThreadsResultSchema>;
 export type SyncRunDto = z.infer<typeof syncRunDtoSchema>;
 export type ManualSyncRequest = z.infer<typeof manualSyncRequestSchema>;
+export type BrowserSessionInput = z.infer<typeof browserSessionSchema>;
+export type QueueSendRequest = z.infer<typeof queueSendRequestSchema>;
+export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>;
+export type SendMessageResultDto = z.infer<typeof sendMessageResultSchema>;

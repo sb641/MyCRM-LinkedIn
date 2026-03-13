@@ -4,13 +4,15 @@ import {
   generateDraftInputSchema,
   type GeneratedDraftResultDto,
   generatedDraftResultSchema,
+  enqueueJobResultSchema,
   mutationResultSchema,
   NotFoundError,
+  queueSendRequestSchema,
   updateRelationshipStatusInputSchema,
   ValidationError
 } from '@mycrm/core';
 import { createAiAdapter, createPromptBuilder } from '@mycrm/ai';
-import { createDb, createMutationRepository } from '@mycrm/db';
+import { createDb, createJobRepository, createMutationRepository } from '@mycrm/db';
 
 export async function updateContactRelationshipStatus(
   contactId: string,
@@ -101,6 +103,44 @@ export async function generateDraft(input: unknown, databaseUrl?: string): Promi
     }
 
     return generatedDraftResultSchema.parse(saved);
+  } finally {
+    await sqlite.close();
+  }
+}
+
+export async function queueApprovedDraftSend(input: unknown, databaseUrl?: string) {
+  const parsed = queueSendRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid send queue payload', parsed.error.flatten());
+  }
+
+  const { db, sqlite } = await createDb(databaseUrl);
+
+  try {
+    const mutationRepository = createMutationRepository(db, sqlite);
+    const jobRepository = createJobRepository(db, sqlite);
+    const draft = await mutationRepository.findDraftForSend(parsed.data.draftId);
+
+    if (!draft) {
+      throw new NotFoundError(`Draft ${parsed.data.draftId} was not found`, { draftId: parsed.data.draftId });
+    }
+
+    if (draft.draftStatus !== 'approved' || !draft.approvedText) {
+      throw new ValidationError('Draft must be approved before queueing send', {
+        draftId: parsed.data.draftId,
+        draftStatus: draft.draftStatus
+      });
+    }
+
+    const result = await jobRepository.enqueueJob('send_message', {
+      draftId: parsed.data.draftId,
+      conversationId: parsed.data.conversationId,
+      accountId: parsed.data.accountId,
+      provider: parsed.data.provider,
+      messageText: draft.approvedText
+    });
+
+    return enqueueJobResultSchema.parse(result);
   } finally {
     await sqlite.close();
   }

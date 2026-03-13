@@ -31,6 +31,10 @@ The test plan is phased and expands with each vertical slice.
 - verify the generated preview renders without leaving the current conversation context
 - verify the contact summary shows a follow-up label and urgency callout when a thread is awaiting reply
 - verify empty and error states render without crashing the shell
+- save a browser session with `POST /api/browser-session` for `local-account` and verify `GET /api/browser-session?accountId=local-account` returns the saved payload
+- enable `ENABLE_REAL_BROWSER_SYNC=true`, queue manual sync from the CRM shell, and verify the active sync state appears without breaking the rest of the workspace
+- verify the shell shows browser-session readiness before queueing sync and surfaces operator guidance when the worker reports missing or stale session failures
+- verify a saved-session manual sync currently lands in retry-needed guidance because Playwright execution is still intentionally stubbed in Phase 9
 
 ## Current validation commands
 

@@ -77,7 +77,7 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - `packages/automation` now exposes a richer messaging provider contract for listing threads and loading thread messages.
 - The package includes a fake provider backed by deterministic DOM fixtures so parsing and provider behavior can be tested without LinkedIn or Playwright.
 - The automation package now also exposes deterministic mock import helpers so worker flows can simulate thread sync without a real provider session.
-- A lightweight in-memory session store now defines the session storage abstraction that later browser-backed providers will implement.
+- The automation package now defines both an in-memory session store for isolated tests and a file-backed session store for local browser-session bootstrap flows.
 - The Playwright provider exists only as a guarded skeleton in this phase and intentionally throws until the real browser-assisted sync phase begins.
 - Shared fixture data is consumed from `packages/test-fixtures` so automation tests stay deterministic and local-first.
 - `apps/worker` now processes `import_threads` jobs through the fake automation flow and persists sync summaries into the shared `sync_runs` table.
@@ -92,7 +92,11 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - When the flag is enabled but no saved session exists, the worker records a failed `sync_run` and reschedules the job through the existing retry policy.
 - This gives the project a real session-backed integration seam before adding manual sync UI and actual browser execution steps.
 - `apps/web` now also exposes a dedicated manual browser-sync enqueue path through `/api/jobs?mode=manual-sync` and the CRM shell.
+- `apps/web` also exposes `/api/browser-session` so an operator can save and inspect session bootstrap payloads for a specific account before queueing a real browser sync.
+- `apps/worker` now reads saved browser sessions from the shared file-backed session store, which makes the guarded real-browser path reachable across separate web and worker processes.
 - The shell can queue an `import_threads` job for a chosen account ID without bypassing the worker or the existing audit/retry flow.
+- The shell also derives browser-session readiness and richer sync-run summaries in its presentation layer so operator-facing sync state stays readable without coupling UI components to raw DTOs.
+- The same presentation layer now normalizes raw sync failures into stable operator guidance, which keeps retry instructions consistent even if worker error strings vary.
 - This keeps manual operator intent explicit while the actual browser execution remains guarded behind the feature flag and session requirements.
 
 ## Guardrails
@@ -101,4 +105,4 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - Mock adapters are the default path for tests and local development.
 - Real browser sync and real send remain disabled by default.
 - Sending stays user-triggered in later phases.
-- The concrete real-send method is intentionally deferred: before Phase 10 implementation, the project must present send-path options to the user and implement only the user-approved approach.
+- Phase 10 now uses the user-approved browser-driven send path: approved drafts can enqueue `send_message` jobs, the worker executes them through the automation send seam, duplicate queueing is deduped by `draftId`, and fake-provider coverage validates the post-send mutation path while the real Playwright send implementation remains intentionally stubbed.
