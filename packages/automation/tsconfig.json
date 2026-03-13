@@ -1,12 +1,18 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": "src",
+    "rootDir": "..",
     "outDir": "dist",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "declaration": true,
-    "noEmit": false
+    "noEmit": false,
+    "baseUrl": ".",
+    "paths": {
+      "@mycrm/test-fixtures": ["../test-fixtures/src/index.ts"],
+      "@mycrm/core": ["../core/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "../test-fixtures/src/**/*.ts", "../core/src/**/*.ts"],
+  "exclude": ["../core/src/**/*.test.ts", "../test-fixtures/src/**/*.test.ts"],
 }

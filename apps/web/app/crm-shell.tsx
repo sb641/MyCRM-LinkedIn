@@ -68,9 +68,9 @@ export function CrmShell({ state, flags }: CrmShellProps) {
       <div className="crm-shell">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Phase 6</p>
+            <p className="eyebrow">Phase 8</p>
             <h1 className="hero-title">LinkedIn CRM Workspace</h1>
-            <p className="hero-copy">The workspace now highlights follow-up timing, recommends the next outreach step, and keeps draft generation close to the thread.</p>
+            <p className="hero-copy">The workspace now tracks follow-up timing, draft generation, and mock sync runs through the local worker automation loop.</p>
           </div>
           <div className="topbar-actions" aria-label="Top bar actions">
             <button className="ghost-button" type="button">Sync inbox</button>
@@ -317,6 +317,30 @@ export function CrmShell({ state, flags }: CrmShellProps) {
             <div className="stack-card">
               <p className="eyebrow">CRM model</p>
               <p className="stack-copy">Selection stays URL-driven, while badges, timestamps, priority, and quick actions are derived in a presentation layer so Phase 5 can reuse the same shell.</p>
+            </div>
+
+            <div className="stack-card">
+              <div className="conversation-row">
+                <p className="eyebrow">Recent sync runs</p>
+                <span className="subtle-pill">{state.syncRuns.length}</span>
+              </div>
+              {state.syncRuns.length === 0 ? (
+                <p className="stack-copy">No sync runs recorded yet.</p>
+              ) : (
+                <div className="sync-run-list" aria-label="Recent sync runs">
+                  {state.syncRuns.map((syncRun) => (
+                    <article key={syncRun.id} className="draft-card">
+                      <div className="conversation-row">
+                        <strong>{syncRun.statusLabel}</strong>
+                        <span className="subtle-pill">{syncRun.relativeStartedAt}</span>
+                      </div>
+                      <p>{syncRun.provider}</p>
+                      <p className="conversation-meta">{syncRun.summaryLabel}</p>
+                      {syncRun.error ? <p className="generated-draft-error">{syncRun.error}</p> : null}
+                    </article>
+                  ))}
+                </div>
+              )}
             </div>
           </aside>
         </div>

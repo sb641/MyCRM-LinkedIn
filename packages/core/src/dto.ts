@@ -113,6 +113,20 @@ export const jobDtoSchema = z.object({
   updatedAt: z.number().int()
 });
 
+export const auditLogEntrySchema = z.object({
+  id: z.string().min(1),
+  entityType: z.string().min(1),
+  entityId: z.string().min(1),
+  action: z.string().min(1),
+  payload: z.string().min(1),
+  createdAt: z.number().int()
+});
+
+export const jobWithAuditSchema = z.object({
+  job: jobDtoSchema,
+  auditEntries: z.array(auditLogEntrySchema)
+});
+
 export const enqueueJobInputSchema = z.object({
   type: jobTypeSchema,
   payload: z.record(z.string(), z.unknown()),
@@ -128,6 +142,30 @@ export const mutationResultSchema = z.object({
   success: z.literal(true)
 });
 
+export const importThreadsPayloadSchema = z.object({
+  provider: z.string().min(1).default('fake-linkedin'),
+  accountId: z.string().min(1).default('local-account')
+});
+
+export const importThreadsResultSchema = z.object({
+  provider: z.string().min(1),
+  accountId: z.string().min(1),
+  itemsScanned: z.number().int().nonnegative(),
+  itemsImported: z.number().int().nonnegative(),
+  threadIds: z.array(z.string().min(1))
+});
+
+export const syncRunDtoSchema = z.object({
+  id: z.string().min(1),
+  provider: z.string().min(1),
+  status: z.string().min(1),
+  startedAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+  itemsScanned: z.number().int().nonnegative(),
+  itemsImported: z.number().int().nonnegative(),
+  error: z.string().nullable()
+});
+
 export type InboxItemDto = z.infer<typeof inboxItemSchema>;
 export type MessageDto = z.infer<typeof messageDtoSchema>;
 export type DraftSummaryDto = z.infer<typeof draftSummarySchema>;
@@ -138,6 +176,11 @@ export type GenerateDraftInput = z.infer<typeof generateDraftInputSchema>;
 export type GeneratedDraftVariantDto = z.infer<typeof generatedDraftVariantSchema>;
 export type GeneratedDraftResultDto = z.infer<typeof generatedDraftResultSchema>;
 export type JobDto = z.infer<typeof jobDtoSchema>;
+export type AuditLogEntryDto = z.infer<typeof auditLogEntrySchema>;
+export type JobWithAuditDto = z.infer<typeof jobWithAuditSchema>;
 export type EnqueueJobInput = z.infer<typeof enqueueJobInputSchema>;
 export type EnqueueJobResultDto = z.infer<typeof enqueueJobResultSchema>;
 export type MutationResultDto = z.infer<typeof mutationResultSchema>;
+export type ImportThreadsPayload = z.infer<typeof importThreadsPayloadSchema>;
+export type ImportThreadsResultDto = z.infer<typeof importThreadsResultSchema>;
+export type SyncRunDto = z.infer<typeof syncRunDtoSchema>;

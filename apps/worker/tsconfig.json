@@ -9,9 +9,16 @@
     "baseUrl": ".",
     "paths": {
       "@mycrm/core": ["../../packages/core/src/index.ts"],
-      "@mycrm/db": ["../../packages/db/src/index.ts"]
+      "@mycrm/db": ["../../packages/db/src/index.ts"],
+      "@mycrm/automation": ["../../packages/automation/src/index.ts"],
+      "@mycrm/test-fixtures": ["../../packages/test-fixtures/src/index.ts"]
     }
   },
-  "include": ["src/**/*.ts", "../../packages/db/src/sqljs.d.ts"],
+  "include": [
+    "src/**/*.ts",
+    "../../packages/db/src/sqljs.d.ts",
+    "../../packages/automation/src/**/*.ts",
+    "../../packages/test-fixtures/src/**/*.ts"
+  ],
   "exclude": ["src/**/*.test.ts"]
 }

@@ -26,6 +26,7 @@ export const sendStatuses = [
 export const jobStatuses = [
   'queued',
   'running',
+  'retry_scheduled',
   'succeeded',
   'failed',
   'cancelled'

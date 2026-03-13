@@ -30,8 +30,8 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 4 | Contact List, Conversation Viewer, and CRM Status Engine | Completed and validated |
 | [x] | 5 | Draft Workflow and Gemini Integration | Completed and validated |
 | [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
-| [-] | 7 | Jobs, Worker, and Queueing | First vertical slice completed and validated |
-| [ ] | 8 | Automation Adapter with Fixtures and Fake Provider | Pending |
+| [x] | 7 | Jobs, Worker, and Queueing | Completed and validated |
+| [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
 | [ ] | 9 | Real Browser-Assisted Sync | Pending |
 | [ ] | 10 | User-Approved Send Workflow | Pending |
 | [ ] | 11 | Settings, Secrets, Security, Backup/Restore | Pending |
@@ -207,43 +207,57 @@ Validation:
 
 ## Phase 7
 
-Status: `[-] In progress`
+Status: `[x] Complete`
 
 Goal:
 Move long-running tasks into the worker and queue.
 
 Implementation checklist:
 - [x] Job types and transitions
-- [ ] Locking and retry policy
-- [ ] Audit logging for jobs
+- [x] Locking and retry policy
+- [x] Audit logging for jobs
 - [x] Polling endpoint/UI
 - [x] Worker integration tests
 - [x] Docs update
 
 Validation:
 - [x] `pnpm --filter @mycrm/db test`
+- [x] `pnpm --filter @mycrm/web test`
 - [x] `pnpm --filter @mycrm/worker test`
 - [x] `pnpm test`
 - [x] `pnpm typecheck`
 
 ## Phase 8
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Build a testable automation layer with fixtures and fake provider.
 
 Implementation checklist:
-- [ ] Messaging provider interface
-- [ ] Fake provider
-- [ ] Playwright provider skeleton
-- [ ] DOM fixtures and parsers
-- [ ] Session storage abstraction
-- [ ] Integration and E2E tests
-- [ ] Docs update
+- [x] Messaging provider interface
+- [x] Fake provider
+- [x] Playwright provider skeleton
+- [x] DOM fixtures and parsers
+- [x] Session storage abstraction
+- [x] Mock import summary helpers
+- [x] Worker processing for `import_threads` jobs
+- [x] `sync_runs` persistence for fake import flows
+- [x] `sync_runs` read-side service and API exposure
+- [x] Sync run visibility in the CRM shell
+- [x] Integration and E2E tests
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/automation test`
+- [x] `pnpm --filter @mycrm/automation typecheck`
+- [x] `pnpm --filter @mycrm/db test`
+- [x] `pnpm --filter @mycrm/worker test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 Review gate:
-- [ ] Human review before Phase 9
+- [x] Human review before Phase 9
 - [ ] Discuss real send approach options with user before Phase 10 implementation
 
 ## Phase 9

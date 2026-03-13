@@ -4,7 +4,7 @@ This repository is being rebuilt into a local-first LinkedIn conversation CRM MV
 
 ## Current status
 
-Phase 7 is the current baseline:
+Phase 8 is the current baseline:
 
 - pnpm monorepo
 - Next.js CRM workspace shell
@@ -21,7 +21,8 @@ Phase 7 is the current baseline:
 - conversation history and draft history panels for the selected contact
 - mock-backed AI draft generation with persisted variants and in-shell preview
 - rule-based follow-up recommendations with due labels and urgency callouts in the shell
-- first queue-backed worker slice with job status API and worker claim/complete flow
+- queue-backed worker flow with job status API, lock recovery, retry scheduling, and per-job audit history
+- automation adapter baseline with fake provider, DOM fixture parsing, session abstraction, guarded Playwright skeleton, mock `import_threads` worker processing, and visible sync run summaries in the CRM shell
 
 The legacy Python automation files remain in the repository for reference during migration, but the new implementation path is TypeScript-first.
 
@@ -81,6 +82,8 @@ pnpm build
 - draft generation API persists generated variants into SQLite-backed draft records
 - follow-up timing and next-step guidance are derived from CRM activity in the presentation layer
 - queued jobs can be listed through the local jobs API and processed by the worker runtime
+- queued jobs returned by the local jobs API include audit entries for enqueue, claim, retry, failure, and success transitions
+- the automation package can parse deterministic thread fixtures and expose fake thread/message data without a real browser session
 - lint, typecheck, tests, and build pass
 - the real send method remains an explicit product decision to be discussed with the user before Phase 10 implementation
 
@@ -116,8 +119,19 @@ Schema, migrations, and progress tracking live in `packages/db` and `docs/implem
 
 - the worker runs as a separate local Node process via `pnpm dev:worker`
 - queued jobs are stored in SQLite and exposed through `/api/jobs`
-- the current worker slice claims the next queued job and marks it succeeded or failed
+- the current worker slice claims the next queued job, recovers stale locks, reschedules retryable failures before terminal failure, and records each lifecycle transition in `audit_log`
+- `/api/jobs` now returns each job together with its audit trail for local observability
 - this queue path is validated with both db-level persistence coverage and worker integration tests
+
+## Phase 8 automation adapter flow
+
+- `packages/automation` now defines the messaging provider contract for thread listing and message loading
+- the fake provider is backed by deterministic DOM fixtures so automation behavior can be tested locally without LinkedIn access
+- deterministic mock import helpers now let the worker simulate thread sync jobs without a real browser session
+- a session store abstraction is in place for later browser-backed providers
+- the Playwright provider is present only as a guarded skeleton and is intentionally not active yet
+- `import_threads` jobs can now be processed by the worker and recorded into `sync_runs` for local observability
+- recent sync runs are now exposed through the local jobs service/API path and rendered in the shell
 
 ## Legacy code
 

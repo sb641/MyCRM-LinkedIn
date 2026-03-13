@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { toErrorResponse } from '@mycrm/core';
-import { enqueueJob, listJobs } from '@/lib/services/jobs-service';
+import { enqueueJob, listJobsWithAudit, listSyncRuns } from '@/lib/services/jobs-service';
 
 export async function GET() {
   try {
-    const jobs = await listJobs();
-    return NextResponse.json({ jobs });
+    const jobs = await listJobsWithAudit();
+    const syncRuns = await listSyncRuns();
+    return NextResponse.json({ jobs, syncRuns });
   } catch (error) {
     const response = toErrorResponse(error);
     return NextResponse.json(response.error, { status: response.status });

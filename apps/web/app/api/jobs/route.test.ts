@@ -1,27 +1,53 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const listJobs = vi.fn();
+const listJobsWithAudit = vi.fn();
 const enqueueJob = vi.fn();
+const listSyncRuns = vi.fn();
 
 vi.mock('@/lib/services/jobs-service', () => ({
-  listJobs,
-  enqueueJob
+  listJobsWithAudit,
+  enqueueJob,
+  listSyncRuns
 }));
 
 describe('/api/jobs', () => {
   it('returns jobs', async () => {
-    listJobs.mockResolvedValueOnce([
+    listJobsWithAudit.mockResolvedValueOnce([
       {
-        id: 'job-001',
-        type: 'generate_draft',
-        status: 'queued',
-        payload: '{}',
-        attemptCount: 0,
-        lockedAt: null,
-        lastError: null,
-        scheduledFor: 1,
-        createdAt: 1,
-        updatedAt: 1
+        job: {
+          id: 'job-001',
+          type: 'generate_draft',
+          status: 'queued',
+          payload: '{}',
+          attemptCount: 0,
+          lockedAt: null,
+          lastError: null,
+          scheduledFor: 1,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        auditEntries: [
+          {
+            id: 'audit-1',
+            entityType: 'job',
+            entityId: 'job-001',
+            action: 'job.enqueued',
+            payload: '{"status":"queued"}',
+            createdAt: 1
+          }
+        ]
+      }
+    ]);
+    listSyncRuns.mockResolvedValueOnce([
+      {
+        id: 'sync-001',
+        provider: 'fake-linkedin',
+        status: 'completed',
+        startedAt: 1,
+        finishedAt: 2,
+        itemsScanned: 3,
+        itemsImported: 2,
+        error: null
       }
     ]);
 
@@ -31,6 +57,8 @@ describe('/api/jobs', () => {
 
     expect(response.status).toBe(200);
     expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0].auditEntries).toHaveLength(1);
+    expect(body.syncRuns).toHaveLength(1);
   });
 
   it('enqueues a job', async () => {

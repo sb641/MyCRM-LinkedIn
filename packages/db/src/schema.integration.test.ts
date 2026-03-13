@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createDb } from './client';
-import { createJobRepository } from './repositories';
+import { createJobRepository, createSyncRunRepository } from './repositories';
 import { contacts, conversations, drafts, messages } from './schema';
 import { buildSeedData } from './seed-data';
 
@@ -143,6 +143,108 @@ describe('Phase 1 schema', () => {
       expect(persistedJob?.status).toBe('succeeded');
     } finally {
       await reopened.sqlite.close();
+    }
+  });
+
+  it('schedules a retry before marking a job as failed terminally', async () => {
+    const databaseUrl = `file:${createTempDbPath('job-retry-policy')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createJobRepository(db, sqlite);
+      const enqueued = await repository.enqueueJob('generate_draft', { contactId: 'contact-001' });
+      const claimed = await repository.claimNextJob();
+
+      expect(claimed?.id).toBe(enqueued.jobId);
+
+      await repository.markJobFailed(enqueued.jobId, 'temporary failure');
+
+      const [retriedJob] = await repository.listJobs();
+      expect(retriedJob?.status).toBe('retry_scheduled');
+      expect(retriedJob?.lastError).toBe('temporary failure');
+      expect(retriedJob?.scheduledFor).not.toBeNull();
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('requeues stale running jobs when the lock timeout expires', async () => {
+    const databaseUrl = `file:${createTempDbPath('job-stale-lock')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createJobRepository(db, sqlite);
+      const enqueued = await repository.enqueueJob('generate_draft', { contactId: 'contact-001' });
+      const claimed = await repository.claimNextJob();
+
+      expect(claimed?.id).toBe(enqueued.jobId);
+
+      const retryPolicy = repository.getRetryPolicy();
+      await sqlite.exec(`
+        UPDATE jobs
+        SET locked_at = ${Date.now() - retryPolicy.lockTimeoutMs - 1000}
+        WHERE id = '${enqueued.jobId}'
+      `);
+
+      const reclaimed = await repository.claimNextJob();
+      expect(reclaimed?.id).toBe(enqueued.jobId);
+      expect(reclaimed?.status).toBe('running');
+      expect(reclaimed?.attemptCount).toBe(2);
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('writes audit log entries for job lifecycle transitions', async () => {
+    const databaseUrl = `file:${createTempDbPath('job-audit-log')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createJobRepository(db, sqlite);
+      const enqueued = await repository.enqueueJob('generate_draft', { contactId: 'contact-001' });
+      await repository.claimNextJob();
+      await repository.markJobSucceeded(enqueued.jobId);
+
+      const auditEntries = await repository.listJobAuditEntries(enqueued.jobId);
+
+      expect(auditEntries.map((entry) => entry.action)).toEqual([
+        'job.enqueued',
+        'job.claimed',
+        'job.succeeded'
+      ]);
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('stores sync run summaries for mock import flows', async () => {
+    const databaseUrl = `file:${createTempDbPath('sync-runs')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createSyncRunRepository(db, sqlite);
+      const syncRunId = await repository.createSyncRun({
+        provider: 'fake-linkedin'
+      });
+
+      await repository.markSyncRunFinished({
+        syncRunId,
+        status: 'succeeded',
+        itemsScanned: 1,
+        itemsImported: 1
+      });
+
+      const syncRuns = await repository.listSyncRuns();
+
+      expect(syncRuns[0]).toMatchObject({
+        id: syncRunId,
+        provider: 'fake-linkedin',
+        status: 'succeeded',
+        itemsScanned: 1,
+        itemsImported: 1
+      });
+    } finally {
+      await sqlite.close();
     }
   });
 });

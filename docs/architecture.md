@@ -64,10 +64,25 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 
 - Phase 7 introduces the first queue-backed worker flow while keeping the product local-first.
 - `packages/db` now exposes job queue helpers for enqueue, claim, list, success, and failure transitions.
-- `apps/worker/src/index.ts` now runs a single worker cycle that claims the next queued job, logs processing, and marks the job as succeeded or failed.
-- `apps/web/app/api/jobs/route.ts` exposes a read-only jobs status endpoint for observability.
+- The queue now includes a basic locking and retry policy: stale `running` jobs are re-queued after a lock timeout, and failed jobs are rescheduled before becoming terminally failed.
+- Job lifecycle transitions are now written into the shared `audit_log` table so queue activity can be inspected without attaching a debugger.
+- `apps/worker/src/index.ts` now runs a single worker cycle that claims the next queued job, logs processing, and marks the job as succeeded, retry-scheduled, or failed.
+- `apps/web/app/api/jobs/route.ts` exposes a read-only jobs status endpoint for observability, and each returned job now includes its audit trail entries.
 - The current worker model is a separate long-running process, not a Vercel-native background runtime.
 - A db-level regression test now verifies that job status transitions persist across reopened sqlite connections.
+
+## Phase 8 automation adapter slice
+
+- Phase 8 starts with a testable automation package instead of a real browser integration.
+- `packages/automation` now exposes a richer messaging provider contract for listing threads and loading thread messages.
+- The package includes a fake provider backed by deterministic DOM fixtures so parsing and provider behavior can be tested without LinkedIn or Playwright.
+- The automation package now also exposes deterministic mock import helpers so worker flows can simulate thread sync without a real provider session.
+- A lightweight in-memory session store now defines the session storage abstraction that later browser-backed providers will implement.
+- The Playwright provider exists only as a guarded skeleton in this phase and intentionally throws until the real browser-assisted sync phase begins.
+- Shared fixture data is consumed from `packages/test-fixtures` so automation tests stay deterministic and local-first.
+- `apps/worker` now processes `import_threads` jobs through the fake automation flow and persists sync summaries into the shared `sync_runs` table.
+- `apps/web` now reads recent `sync_runs` through the jobs service layer and surfaces them in the CRM shell for local observability.
+- This keeps the queue, worker, and automation layers integrated under local deterministic fixtures before any real browser sync is introduced.
 
 ## Guardrails
 

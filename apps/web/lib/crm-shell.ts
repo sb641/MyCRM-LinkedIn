@@ -3,7 +3,8 @@ import type {
   DraftStatus,
   InboxItemDto,
   RelationshipStatus,
-  SendStatus
+  SendStatus,
+  SyncRunDto
 } from '@mycrm/core';
 
 export type ShellViewState = 'ready' | 'empty' | 'error';
@@ -74,8 +75,15 @@ export type ShellDataState = {
   inbox: InboxListItemViewModel[];
   selectedItem: InboxListItemViewModel | null;
   details: ConversationDetailsViewModel | null;
+  syncRuns: SyncRunViewModel[];
   errorMessage: string | null;
   sort: InboxSortMode;
+};
+
+export type SyncRunViewModel = SyncRunDto & {
+  statusLabel: string;
+  relativeStartedAt: string;
+  summaryLabel: string;
 };
 
 export function getShellRouteState(
@@ -120,11 +128,13 @@ export function buildShellDataState(args: {
   inbox: InboxItemDto[];
   route: ShellRouteState;
   details: ContactConversationDetailsDto | null;
+  syncRuns?: SyncRunDto[];
   errorMessage?: string | null;
 }): ShellDataState {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
   const selectedItem = inbox.find((item) => item.contactId === args.route.selectedContactId) ?? null;
   const details = args.details ? buildConversationDetailsViewModel(args.details) : null;
+  const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
 
   if (args.errorMessage) {
     return {
@@ -132,6 +142,7 @@ export function buildShellDataState(args: {
       inbox,
       selectedItem,
       details: null,
+      syncRuns,
       errorMessage: args.errorMessage,
       sort: args.route.sort
     };
@@ -143,6 +154,7 @@ export function buildShellDataState(args: {
       inbox: [],
       selectedItem: null,
       details: null,
+      syncRuns,
       errorMessage: null,
       sort: args.route.sort
     };
@@ -153,9 +165,19 @@ export function buildShellDataState(args: {
     inbox,
     selectedItem,
     details,
+    syncRuns,
     errorMessage: null,
     sort: args.route.sort
   };
+}
+
+export function buildSyncRunViewModels(syncRuns: SyncRunDto[]): SyncRunViewModel[] {
+  return syncRuns.map((syncRun) => ({
+    ...syncRun,
+    statusLabel: formatSyncRunStatus(syncRun.status),
+    relativeStartedAt: formatRelativeTime(syncRun.startedAt),
+    summaryLabel: `${syncRun.itemsImported}/${syncRun.itemsScanned} imported`
+  }));
 }
 
 export function deriveRelationshipStatus(details: ContactConversationDetailsDto): RelationshipStatus {
@@ -316,6 +338,18 @@ function buildInboxQuickActions(item: InboxItemDto): QuickAction[] {
   }
 
   return [{ label: 'Open thread', intent: 'secondary' }];
+}
+
+function formatSyncRunStatus(status: string) {
+  if (status === 'completed') {
+    return 'Completed';
+  }
+
+  if (status === 'failed') {
+    return 'Failed';
+  }
+
+  return 'Running';
 }
 
 function buildContactBadges(

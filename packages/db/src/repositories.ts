@@ -3,6 +3,46 @@ import type { DatabaseClient, SqliteConnection } from './client';
 import { contacts, drafts } from './schema';
 import type { JobType, RelationshipStatus, SendStatus } from '@mycrm/core';
 
+const JOB_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
+const JOB_RETRY_DELAY_MS = 30 * 1000;
+const MAX_JOB_ATTEMPTS = 3;
+
+async function appendAuditLog(
+  sqlite: SqliteConnection,
+  args: {
+    entityType: string;
+    entityId: string;
+    action: string;
+    payload: Record<string, unknown>;
+  }
+) {
+  const auditId = `audit-${args.entityType}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const safeAuditId = auditId.replace(/'/g, "''");
+  const safeEntityType = args.entityType.replace(/'/g, "''");
+  const safeEntityId = args.entityId.replace(/'/g, "''");
+  const safeAction = args.action.replace(/'/g, "''");
+  const safePayload = JSON.stringify(args.payload).replace(/'/g, "''");
+  const now = Date.now();
+
+  await sqlite.exec(`
+    INSERT INTO audit_log (
+      id,
+      entity_type,
+      entity_id,
+      action,
+      payload,
+      created_at
+    ) VALUES (
+      '${safeAuditId}',
+      '${safeEntityType}',
+      '${safeEntityId}',
+      '${safeAction}',
+      '${safePayload}',
+      ${now}
+    )
+  `);
+}
+
 export async function withTransaction<T>(db: DatabaseClient, callback: (tx: DatabaseClient) => Promise<T>) {
   await db.run(sql.raw('BEGIN'));
 
@@ -376,6 +416,31 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
       `);
     },
 
+    async listJobAuditEntries(jobId: string) {
+      const safeJobId = jobId.replace(/'/g, "''");
+
+      return sqlite.all<{
+        id: string;
+        entityType: string;
+        entityId: string;
+        action: string;
+        payload: string;
+        createdAt: number;
+      }>(`
+        SELECT
+          id,
+          entity_type AS entityType,
+          entity_id AS entityId,
+          action,
+          payload,
+          created_at AS createdAt
+        FROM audit_log
+        WHERE entity_type = 'job'
+          AND entity_id = '${safeJobId}'
+        ORDER BY created_at ASC
+      `);
+    },
+
     async enqueueJob(type: JobType, payload: Record<string, unknown>, scheduledFor?: number | null) {
       const jobId = `job-generated-${Date.now()}`;
       const now = Date.now();
@@ -409,22 +474,54 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
         )
       `);
 
+      await appendAuditLog(sqlite, {
+        entityType: 'job',
+        entityId: jobId,
+        action: 'job.enqueued',
+        payload: {
+          type,
+          scheduledFor: scheduledValue,
+          status: 'queued'
+        }
+      });
+
       return { jobId, status: 'queued' as const };
     },
 
     async claimNextJob() {
       const now = Date.now();
+
+      await sqlite.exec(`
+        UPDATE jobs
+        SET status = 'queued',
+            locked_at = NULL,
+            updated_at = ${now}
+        WHERE status = 'running'
+          AND locked_at IS NOT NULL
+          AND locked_at <= ${now - JOB_LOCK_TIMEOUT_MS}
+      `);
+
+      await sqlite.exec(`
+        UPDATE jobs
+        SET status = 'queued',
+            updated_at = ${now}
+        WHERE status = 'retry_scheduled'
+          AND (scheduled_for IS NULL OR scheduled_for <= ${now})
+      `);
+
       const [job] = await sqlite.all<{
         id: string;
         type: string;
         payload: string;
         attemptCount: number;
+        status: string;
       }>(`
         SELECT
           id,
           type,
           payload,
-          attempt_count AS attemptCount
+          attempt_count AS attemptCount,
+          status
         FROM jobs
         WHERE status = 'queued'
           AND (scheduled_for IS NULL OR scheduled_for <= ${now})
@@ -445,6 +542,17 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
             updated_at = ${now}
         WHERE id = '${safeJobId}'
       `);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'job',
+        entityId: job.id,
+        action: 'job.claimed',
+        payload: {
+          status: 'running',
+          lockedAt: now,
+          attemptCount: Number(job.attemptCount ?? 0) + 1
+        }
+      });
 
       return {
         ...job,
@@ -476,19 +584,164 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
       if (updatedJob?.status !== 'succeeded') {
         throw new Error(`Failed to persist succeeded status for job ${jobId}`);
       }
+
+      await appendAuditLog(sqlite, {
+        entityType: 'job',
+        entityId: jobId,
+        action: 'job.succeeded',
+        payload: {
+          status: 'succeeded'
+        }
+      });
     },
 
     async markJobFailed(jobId: string, errorMessage: string) {
       const safeJobId = jobId.replace(/'/g, "''");
       const safeError = errorMessage.replace(/'/g, "''");
       const now = Date.now();
+      const [job] = await sqlite.all<{ attemptCount: number }>(`
+        SELECT attempt_count AS attemptCount
+        FROM jobs
+        WHERE id = '${safeJobId}'
+        LIMIT 1
+      `);
+
+      if (!job) {
+        return;
+      }
+
+      const attemptCount = Number(job.attemptCount ?? 0);
+      const shouldRetry = attemptCount < MAX_JOB_ATTEMPTS;
+      const nextStatus = shouldRetry ? 'retry_scheduled' : 'failed';
+      const scheduledFor = shouldRetry ? now + JOB_RETRY_DELAY_MS : 'NULL';
+
       await sqlite.exec(`
         UPDATE jobs
-        SET status = 'failed',
+        SET status = '${nextStatus}',
             locked_at = NULL,
             last_error = '${safeError}',
+            scheduled_for = ${scheduledFor},
             updated_at = ${now}
         WHERE id = '${safeJobId}'
+      `);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'job',
+        entityId: jobId,
+        action: shouldRetry ? 'job.retry_scheduled' : 'job.failed',
+        payload: {
+          status: nextStatus,
+          attemptCount,
+          lastError: errorMessage,
+          scheduledFor: shouldRetry ? now + JOB_RETRY_DELAY_MS : null
+        }
+      });
+    },
+
+    getRetryPolicy() {
+      return {
+        lockTimeoutMs: JOB_LOCK_TIMEOUT_MS,
+        retryDelayMs: JOB_RETRY_DELAY_MS,
+        maxAttempts: MAX_JOB_ATTEMPTS
+      };
+    }
+  };
+}
+
+export function createSyncRunRepository(_db: DatabaseClient, sqlite: SqliteConnection) {
+  return {
+    async createSyncRun(args: {
+      provider: string;
+      status?: 'running' | 'succeeded' | 'failed';
+      startedAt?: number;
+      finishedAt?: number | null;
+      itemsScanned?: number;
+      itemsImported?: number;
+      error?: string | null;
+    }) {
+      const syncRunId = `sync-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const now = args.startedAt ?? Date.now();
+      const safeProvider = args.provider.replace(/'/g, "''");
+      const safeStatus = (args.status ?? 'running').replace(/'/g, "''");
+      const safeError = args.error ? `'${args.error.replace(/'/g, "''")}'` : 'NULL';
+      const finishedAt = args.finishedAt ?? 'NULL';
+      const itemsScanned = args.itemsScanned ?? 0;
+      const itemsImported = args.itemsImported ?? 0;
+
+      await sqlite.exec(`
+        INSERT INTO sync_runs (
+          id,
+          provider,
+          status,
+          started_at,
+          finished_at,
+          items_scanned,
+          items_imported,
+          error
+        ) VALUES (
+          '${syncRunId}',
+          '${safeProvider}',
+          '${safeStatus}',
+          ${now},
+          ${finishedAt},
+          ${itemsScanned},
+          ${itemsImported},
+          ${safeError}
+        )
+      `);
+
+      return syncRunId;
+    },
+
+    async markSyncRunFinished(args: {
+      syncRunId: string;
+      status: 'succeeded' | 'failed';
+      finishedAt?: number;
+      itemsScanned: number;
+      itemsImported: number;
+      error?: string | null;
+    }) {
+      const safeSyncRunId = args.syncRunId.replace(/'/g, "''");
+      const safeStatus = args.status.replace(/'/g, "''");
+      const safeError = args.error ? `'${args.error.replace(/'/g, "''")}'` : 'NULL';
+      const finishedAt = args.finishedAt ?? Date.now();
+
+      await sqlite.exec(`
+        UPDATE sync_runs
+        SET status = '${safeStatus}',
+            finished_at = ${finishedAt},
+            items_scanned = ${args.itemsScanned},
+            items_imported = ${args.itemsImported},
+            error = ${safeError}
+        WHERE id = '${safeSyncRunId}'
+      `);
+    },
+
+    async listSyncRuns(limit = 10) {
+      const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, Math.trunc(limit))) : 10;
+
+      return sqlite.all<{
+        id: string;
+        provider: string;
+        status: 'running' | 'succeeded' | 'failed';
+        startedAt: number;
+        finishedAt: number | null;
+        itemsScanned: number;
+        itemsImported: number;
+        error: string | null;
+      }>(`
+        SELECT
+          id,
+          provider,
+          status,
+          started_at AS startedAt,
+          finished_at AS finishedAt,
+          items_scanned AS itemsScanned,
+          items_imported AS itemsImported,
+          error
+        FROM sync_runs
+        ORDER BY started_at DESC
+        LIMIT ${safeLimit}
       `);
     }
   };
