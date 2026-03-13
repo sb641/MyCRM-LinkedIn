@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createBrowserSyncProvider,
   FakeMessagingProvider,
   InMemorySessionStore,
   MockMessagingProvider,
   PlaywrightMessagingProvider,
   parseThreadFixture,
+  runImportThreads,
   runFakeImportThreads
 } from './index';
 
@@ -74,15 +76,51 @@ describe('automation package', () => {
   });
 
   it('exposes a guarded Playwright skeleton', async () => {
-    const provider = new PlaywrightMessagingProvider();
+    const provider = new PlaywrightMessagingProvider({
+      accountId: 'account-1',
+      cookiesJson: '[]',
+      userAgent: 'test-agent',
+      capturedAt: 1735689600000
+    });
 
     await expect(provider.listThreads()).rejects.toThrow(/not implemented yet/i);
+  });
+
+  it('rejects real browser sync when the feature flag is disabled', async () => {
+    await expect(
+      createBrowserSyncProvider(
+        { provider: 'linkedin-browser', accountId: 'account-1' },
+        { enableRealBrowserSync: false, sessionStore: new InMemorySessionStore() }
+      )
+    ).rejects.toThrow(/disabled/i);
+  });
+
+  it('rejects real browser sync when no saved session exists', async () => {
+    await expect(
+      createBrowserSyncProvider(
+        { provider: 'linkedin-browser', accountId: 'missing-account' },
+        { enableRealBrowserSync: true, sessionStore: new InMemorySessionStore() }
+      )
+    ).rejects.toThrow(/no saved browser session/i);
   });
 
   it('returns a deterministic import summary for fake thread sync', async () => {
     await expect(runFakeImportThreads({ provider: 'fake-linkedin', accountId: 'local-account' })).resolves.toMatchObject({
       provider: 'fake-linkedin',
       accountId: 'local-account',
+      itemsScanned: 1,
+      itemsImported: 1,
+      threadIds: ['thread-import-001']
+    });
+  });
+
+  it('falls back to the fake import path when real browser sync is disabled', async () => {
+    await expect(
+      runImportThreads(
+        { provider: 'fake-linkedin', accountId: 'local-account' },
+        { enableRealBrowserSync: false }
+      )
+    ).resolves.toMatchObject({
       itemsScanned: 1,
       itemsImported: 1,
       threadIds: ['thread-import-001']

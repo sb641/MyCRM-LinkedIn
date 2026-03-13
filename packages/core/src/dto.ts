@@ -147,6 +147,11 @@ export const importThreadsPayloadSchema = z.object({
   accountId: z.string().min(1).default('local-account')
 });
 
+export const manualSyncRequestSchema = z.object({
+  accountId: z.string().min(1).default('local-account'),
+  provider: z.string().min(1).default('linkedin-browser')
+});
+
 export const importThreadsResultSchema = z.object({
   provider: z.string().min(1),
   accountId: z.string().min(1),
@@ -184,3 +189,4 @@ export type MutationResultDto = z.infer<typeof mutationResultSchema>;
 export type ImportThreadsPayload = z.infer<typeof importThreadsPayloadSchema>;
 export type ImportThreadsResultDto = z.infer<typeof importThreadsResultSchema>;
 export type SyncRunDto = z.infer<typeof syncRunDtoSchema>;
+export type ManualSyncRequest = z.infer<typeof manualSyncRequestSchema>;

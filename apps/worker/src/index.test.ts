@@ -47,25 +47,25 @@ describe('worker bootstrap', () => {
   });
 
   it('marks a failed job for retry before terminal failure', async () => {
+    const dateNowSpy = vi.spyOn(Date, 'now');
+    const baseNow = 1735689600000;
+    dateNowSpy.mockReturnValue(baseNow);
     const databaseUrl = `file:${path.resolve(
       import.meta.dirname,
-      `./worker-phase7-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
+      `./worker-phase7-test-${baseNow}-${Math.random().toString(16).slice(2)}.db`
     )}`;
 
     await runMigrations(databaseUrl);
 
     const setupConnection = await createDb(databaseUrl);
-    const dateNowSpy = vi.spyOn(Date, 'now');
 
     try {
       const repository = createJobRepository(setupConnection.db, setupConnection.sqlite);
       const retryPolicy = repository.getRetryPolicy();
-      const baseNow = Date.now();
       const enqueued = await repository.enqueueJob('generate_draft', { contactId: 'contact-001' });
 
       await setupConnection.sqlite.close();
 
-      dateNowSpy.mockReturnValue(baseNow);
       const result = await runWorkerCycle(databaseUrl);
 
       expect(result.status).toBe('processed');
@@ -126,6 +126,61 @@ describe('worker bootstrap', () => {
         });
       } finally {
         await verificationConnection.sqlite.close();
+      }
+    } finally {
+      await setupConnection.sqlite.close().catch(() => undefined);
+    }
+  });
+
+  it('fails import_threads jobs when real browser sync is enabled without a saved session', async () => {
+    const databaseUrl = `file:${path.resolve(
+      import.meta.dirname,
+      `./worker-phase9-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
+    )}`;
+
+    await runMigrations(databaseUrl);
+
+    const setupConnection = await createDb(databaseUrl);
+
+    try {
+      const repository = createJobRepository(setupConnection.db, setupConnection.sqlite);
+      const enqueued = await repository.enqueueJob('import_threads', {
+        provider: 'linkedin-browser',
+        accountId: 'missing-account'
+      });
+
+      await setupConnection.sqlite.close();
+
+      const previousFlag = process.env.ENABLE_REAL_BROWSER_SYNC;
+      process.env.ENABLE_REAL_BROWSER_SYNC = 'true';
+
+      try {
+        const result = await runWorkerCycle(databaseUrl);
+        expect(result.status).toBe('retry_scheduled');
+
+        const verificationConnection = await createDb(databaseUrl);
+        try {
+          const jobs = await createJobRepository(verificationConnection.db, verificationConnection.sqlite).listJobs();
+          const syncRuns = await createSyncRunRepository(verificationConnection.db, verificationConnection.sqlite).listSyncRuns();
+          const processedJob = jobs.find((job) => job.id === enqueued.jobId);
+
+          expect(processedJob?.status).toBe('retry_scheduled');
+          expect(processedJob?.lastError).toMatch(/no saved browser session/i);
+          expect(syncRuns[0]).toMatchObject({
+            provider: 'linkedin-browser',
+            status: 'failed',
+            itemsScanned: 0,
+            itemsImported: 0
+          });
+        } finally {
+          await verificationConnection.sqlite.close();
+        }
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.ENABLE_REAL_BROWSER_SYNC;
+        } else {
+          process.env.ENABLE_REAL_BROWSER_SYNC = previousFlag;
+        }
       }
     } finally {
       await setupConnection.sqlite.close().catch(() => undefined);

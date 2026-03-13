@@ -22,6 +22,10 @@ export function CrmShell({ state, flags }: CrmShellProps) {
   const [generatedDraft, setGeneratedDraft] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [syncAccountId, setSyncAccountId] = useState('local-account');
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const sortOptions = [
     { value: 'recent', label: 'Recent' },
     { value: 'needs-attention', label: 'Needs attention' },
@@ -62,6 +66,36 @@ export function CrmShell({ state, flags }: CrmShellProps) {
     }
   }
 
+  async function handleManualSync() {
+    setIsSyncing(true);
+    setSyncMessage(null);
+    setSyncError(null);
+
+    try {
+      const response = await fetch('/api/jobs?mode=manual-sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          accountId: syncAccountId,
+          provider: 'linkedin-browser'
+        })
+      });
+
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? 'Manual sync enqueue failed');
+      }
+
+      setSyncMessage(`Manual sync queued: ${body.jobId}`);
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Manual sync enqueue failed');
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   return (
     <main className="crm-page">
       <div className="crm-backdrop" />
@@ -73,7 +107,9 @@ export function CrmShell({ state, flags }: CrmShellProps) {
             <p className="hero-copy">The workspace now tracks follow-up timing, draft generation, and mock sync runs through the local worker automation loop.</p>
           </div>
           <div className="topbar-actions" aria-label="Top bar actions">
-            <button className="ghost-button" type="button">Sync inbox</button>
+            <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
+              {isSyncing ? 'Queueing sync...' : 'Sync inbox'}
+            </button>
             <button className="ghost-button" type="button">New note</button>
             <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!state.details || isGenerating}>
               {isGenerating ? 'Generating...' : 'Generate draft'}
@@ -317,6 +353,39 @@ export function CrmShell({ state, flags }: CrmShellProps) {
             <div className="stack-card">
               <p className="eyebrow">CRM model</p>
               <p className="stack-copy">Selection stays URL-driven, while badges, timestamps, priority, and quick actions are derived in a presentation layer so Phase 5 can reuse the same shell.</p>
+            </div>
+
+            <div className="stack-card">
+              <p className="eyebrow">Manual browser sync</p>
+              <label className="draft-goal-field">
+                <span>Account ID</span>
+                <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
+              </label>
+              <button className="accent-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
+                {isSyncing ? 'Queueing sync...' : 'Queue browser sync'}
+              </button>
+              {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
+              {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
+            </div>
+
+            <div className="stack-card">
+              <div className="conversation-row">
+                <p className="eyebrow">Active sync job</p>
+                <button className="ghost-button" type="button" onClick={() => window.location.reload()}>
+                  Refresh
+                </button>
+              </div>
+              {state.activeSyncJob ? (
+                <>
+                  <p>{state.activeSyncJob.statusLabel}</p>
+                  <p className="conversation-meta">{state.activeSyncJob.accountId} · {state.activeSyncJob.provider}</p>
+                  <p className="conversation-meta">Updated {state.activeSyncJob.relativeUpdatedAt}</p>
+                  <p className="conversation-meta">Audit entries: {state.activeSyncJob.auditCount}</p>
+                  {state.activeSyncJob.lastError ? <p className="generated-draft-error">{state.activeSyncJob.lastError}</p> : null}
+                </>
+              ) : (
+                <p className="stack-copy">No queued or running browser sync jobs.</p>
+              )}
             </div>
 
             <div className="stack-card">

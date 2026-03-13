@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ContactConversationDetailsDto, InboxItemDto } from '@mycrm/core';
+import type { ContactConversationDetailsDto, InboxItemDto, JobWithAuditDto } from '@mycrm/core';
 import {
+  buildActiveSyncJobViewModel,
   buildConversationDetailsViewModel,
   buildInboxListItems,
   buildShellDataState,
@@ -167,5 +168,73 @@ describe('crm shell state', () => {
     expect(viewModel.contact.badges.some((badge) => badge.label === '1 drafts')).toBe(true);
     expect(viewModel.contact.followupDueLabel).toContain('Follow-up');
     expect(viewModel.drafts[0]?.statusLabel).toBe('generated');
+  });
+
+  it('builds an active sync job view model for queued import jobs', () => {
+    const jobs: JobWithAuditDto[] = [
+      {
+        job: {
+          id: 'job-001',
+          type: 'import_threads',
+          status: 'queued',
+          payload: JSON.stringify({ accountId: 'browser-account', provider: 'linkedin-browser' }),
+          attemptCount: 0,
+          lockedAt: null,
+          lastError: null,
+          scheduledFor: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        auditEntries: [
+          {
+            id: 'audit-001',
+            entityType: 'job',
+            entityId: 'job-001',
+            action: 'job.enqueued',
+            payload: '{"status":"queued"}',
+            createdAt: 1
+          }
+        ]
+      }
+    ];
+
+    const viewModel = buildActiveSyncJobViewModel(jobs);
+
+    expect(viewModel).toMatchObject({
+      id: 'job-001',
+      accountId: 'browser-account',
+      provider: 'linkedin-browser',
+      status: 'queued',
+      statusLabel: 'Queued',
+      auditCount: 1
+    });
+  });
+
+  it('includes active sync job state in the shell data model', () => {
+    const state = buildShellDataState({
+      inbox: [inboxItem],
+      route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
+      details,
+      jobs: [
+        {
+          job: {
+            id: 'job-001',
+            type: 'import_threads',
+            status: 'retry_scheduled',
+            payload: JSON.stringify({ accountId: 'browser-account', provider: 'linkedin-browser' }),
+            attemptCount: 1,
+            lockedAt: null,
+            lastError: 'No saved browser session found',
+            scheduledFor: 2,
+            createdAt: 1,
+            updatedAt: 2
+          },
+          auditEntries: []
+        }
+      ]
+    });
+
+    expect(state.activeSyncJob?.statusLabel).toBe('Retry scheduled');
+    expect(state.activeSyncJob?.lastError).toContain('No saved browser session');
   });
 });

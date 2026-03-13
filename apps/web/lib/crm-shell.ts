@@ -2,6 +2,7 @@ import type {
   ContactConversationDetailsDto,
   DraftStatus,
   InboxItemDto,
+  JobWithAuditDto,
   RelationshipStatus,
   SendStatus,
   SyncRunDto
@@ -76,6 +77,7 @@ export type ShellDataState = {
   selectedItem: InboxListItemViewModel | null;
   details: ConversationDetailsViewModel | null;
   syncRuns: SyncRunViewModel[];
+  activeSyncJob: SyncJobViewModel | null;
   errorMessage: string | null;
   sort: InboxSortMode;
 };
@@ -84,6 +86,17 @@ export type SyncRunViewModel = SyncRunDto & {
   statusLabel: string;
   relativeStartedAt: string;
   summaryLabel: string;
+};
+
+export type SyncJobViewModel = {
+  id: string;
+  accountId: string;
+  provider: string;
+  status: string;
+  statusLabel: string;
+  relativeUpdatedAt: string;
+  lastError: string | null;
+  auditCount: number;
 };
 
 export function getShellRouteState(
@@ -129,12 +142,14 @@ export function buildShellDataState(args: {
   route: ShellRouteState;
   details: ContactConversationDetailsDto | null;
   syncRuns?: SyncRunDto[];
+  jobs?: JobWithAuditDto[];
   errorMessage?: string | null;
 }): ShellDataState {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
   const selectedItem = inbox.find((item) => item.contactId === args.route.selectedContactId) ?? null;
   const details = args.details ? buildConversationDetailsViewModel(args.details) : null;
   const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
+  const activeSyncJob = buildActiveSyncJobViewModel(args.jobs ?? []);
 
   if (args.errorMessage) {
     return {
@@ -143,6 +158,7 @@ export function buildShellDataState(args: {
       selectedItem,
       details: null,
       syncRuns,
+      activeSyncJob,
       errorMessage: args.errorMessage,
       sort: args.route.sort
     };
@@ -155,6 +171,7 @@ export function buildShellDataState(args: {
       selectedItem: null,
       details: null,
       syncRuns,
+      activeSyncJob,
       errorMessage: null,
       sort: args.route.sort
     };
@@ -166,6 +183,7 @@ export function buildShellDataState(args: {
     selectedItem,
     details,
     syncRuns,
+    activeSyncJob,
     errorMessage: null,
     sort: args.route.sort
   };
@@ -178,6 +196,27 @@ export function buildSyncRunViewModels(syncRuns: SyncRunDto[]): SyncRunViewModel
     relativeStartedAt: formatRelativeTime(syncRun.startedAt),
     summaryLabel: `${syncRun.itemsImported}/${syncRun.itemsScanned} imported`
   }));
+}
+
+export function buildActiveSyncJobViewModel(jobs: JobWithAuditDto[]): SyncJobViewModel | null {
+  const activeJob = jobs.find((entry) => ['queued', 'running', 'retry_scheduled'].includes(entry.job.status));
+
+  if (!activeJob) {
+    return null;
+  }
+
+  const payload = safeParseJobPayload(activeJob.job.payload);
+
+  return {
+    id: activeJob.job.id,
+    accountId: typeof payload.accountId === 'string' ? payload.accountId : 'unknown-account',
+    provider: typeof payload.provider === 'string' ? payload.provider : 'unknown-provider',
+    status: activeJob.job.status,
+    statusLabel: formatSyncJobStatus(activeJob.job.status),
+    relativeUpdatedAt: formatRelativeTime(activeJob.job.updatedAt),
+    lastError: activeJob.job.lastError,
+    auditCount: activeJob.auditEntries.length
+  };
 }
 
 export function deriveRelationshipStatus(details: ContactConversationDetailsDto): RelationshipStatus {
@@ -350,6 +389,30 @@ function formatSyncRunStatus(status: string) {
   }
 
   return 'Running';
+}
+
+function formatSyncJobStatus(status: string) {
+  if (status === 'queued') {
+    return 'Queued';
+  }
+
+  if (status === 'running') {
+    return 'Running';
+  }
+
+  if (status === 'retry_scheduled') {
+    return 'Retry scheduled';
+  }
+
+  return status;
+}
+
+function safeParseJobPayload(payload: string): Record<string, unknown> {
+  try {
+    return JSON.parse(payload) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 function buildContactBadges(

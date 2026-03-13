@@ -1,6 +1,6 @@
 import { createLogger, getFeatureFlags } from '@mycrm/core';
 import { createDb, createJobRepository, createSyncRunRepository } from '@mycrm/db';
-import { runFakeImportThreads } from '@mycrm/automation';
+import { InMemorySessionStore, runImportThreads } from '@mycrm/automation';
 
 const logger = createLogger('worker');
 
@@ -21,12 +21,16 @@ export async function runWorkerCycle(databaseUrl?: string) {
       if (job.type === 'import_threads') {
         const payload = JSON.parse(job.payload) as Record<string, unknown>;
         const syncRunRepository = createSyncRunRepository(db, sqlite);
+        const flags = getFeatureFlags();
         const syncRunId = await syncRunRepository.createSyncRun({
           provider: typeof payload.provider === 'string' ? payload.provider : 'fake-linkedin'
         });
 
         try {
-          const result = await runFakeImportThreads(payload);
+          const result = await runImportThreads(payload, {
+            enableRealBrowserSync: flags.ENABLE_REAL_BROWSER_SYNC,
+            sessionStore: new InMemorySessionStore()
+          });
           await syncRunRepository.markSyncRunFinished({
             syncRunId,
             status: 'succeeded',

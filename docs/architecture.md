@@ -84,6 +84,17 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - `apps/web` now reads recent `sync_runs` through the jobs service layer and surfaces them in the CRM shell for local observability.
 - This keeps the queue, worker, and automation layers integrated under local deterministic fixtures before any real browser sync is introduced.
 
+## Phase 9 browser sync entry slice
+
+- Phase 9 starts by wiring a guarded real-browser sync entry path without enabling real Playwright automation by default.
+- `packages/automation` now exposes a browser-sync provider factory that requires both `ENABLE_REAL_BROWSER_SYNC` and a saved session for the requested account.
+- When the real-browser flag is disabled, import jobs continue to use the deterministic fake sync path from Phase 8.
+- When the flag is enabled but no saved session exists, the worker records a failed `sync_run` and reschedules the job through the existing retry policy.
+- This gives the project a real session-backed integration seam before adding manual sync UI and actual browser execution steps.
+- `apps/web` now also exposes a dedicated manual browser-sync enqueue path through `/api/jobs?mode=manual-sync` and the CRM shell.
+- The shell can queue an `import_threads` job for a chosen account ID without bypassing the worker or the existing audit/retry flow.
+- This keeps manual operator intent explicit while the actual browser execution remains guarded behind the feature flag and session requirements.
+
 ## Guardrails
 
 - AI and automation are behind feature flags.

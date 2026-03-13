@@ -32,7 +32,7 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
 | [x] | 7 | Jobs, Worker, and Queueing | Completed and validated |
 | [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
-| [ ] | 9 | Real Browser-Assisted Sync | Pending |
+| [-] | 9 | Real Browser-Assisted Sync | In progress: guarded browser entry, manual sync enqueue, and active sync state tracking are complete |
 | [ ] | 10 | User-Approved Send Workflow | Pending |
 | [ ] | 11 | Settings, Secrets, Security, Backup/Restore | Pending |
 | [ ] | 12 | Hardening, Performance, QA, and Release | Pending |
@@ -258,20 +258,40 @@ Validation:
 
 Review gate:
 - [x] Human review before Phase 9
+
+## Phase 9
+
+Status: `[-] In progress`
+
+Goal:
+Add a guarded real browser-assisted sync path without breaking the local-first fake-provider workflow.
+
+Implementation checklist:
+- [x] Guarded real-browser sync entry path with fake fallback
+- [x] Manual browser sync enqueue API and shell action
+- [x] Active sync job state tracking and error visibility in the CRM shell
+- [ ] Session-backed browser auth/bootstrap flow
+- [ ] Browser sync result reconciliation and richer operator UX
+- [ ] Docs update for completed Phase 9 scope
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 - [ ] Discuss real send approach options with user before Phase 10 implementation
 
 ## Phase 9
 
-Status: `[ ] Not started`
+Status: `[-] In progress`
 
 Goal:
 Connect real browser-assisted sync for manual import.
 
 Implementation checklist:
-- [ ] Real browser sync feature flag
-- [ ] Session loading
-- [ ] Manual sync action
-- [ ] Sync run tracking
+- [x] Real browser sync feature flag
+- [x] Session loading guard path
+- [x] Manual sync action
+- [x] Sync run tracking
 - [ ] Error handling
 - [ ] Mock/integration tests and manual smoke notes
 - [ ] Docs update

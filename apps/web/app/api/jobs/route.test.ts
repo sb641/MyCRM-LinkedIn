@@ -2,11 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 const listJobsWithAudit = vi.fn();
 const enqueueJob = vi.fn();
+const enqueueManualBrowserSync = vi.fn();
 const listSyncRuns = vi.fn();
 
 vi.mock('@/lib/services/jobs-service', () => ({
   listJobsWithAudit,
   enqueueJob,
+  enqueueManualBrowserSync,
   listSyncRuns
 }));
 
@@ -77,5 +79,26 @@ describe('/api/jobs', () => {
 
     expect(response.status).toBe(201);
     expect((await response.json()).status).toBe('queued');
+  });
+
+  it('enqueues a manual browser sync job', async () => {
+    enqueueManualBrowserSync.mockResolvedValueOnce({ jobId: 'job-generated-2', status: 'queued' });
+
+    const { POST } = await import('./route');
+    const response = await POST(
+      new Request('http://localhost/api/jobs?mode=manual-sync', {
+        method: 'POST',
+        body: JSON.stringify({
+          accountId: 'browser-account',
+          provider: 'linkedin-browser'
+        })
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(enqueueManualBrowserSync).toHaveBeenCalledWith({
+      accountId: 'browser-account',
+      provider: 'linkedin-browser'
+    });
   });
 });

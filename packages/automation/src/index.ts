@@ -40,6 +40,11 @@ export interface MessagingProvider {
   getThreadMessages(threadId: string): Promise<MessageRecord[]>;
 }
 
+export type BrowserSyncOptions = {
+  enableRealBrowserSync: boolean;
+  sessionStore?: SessionStore;
+};
+
 export class InMemorySessionStore implements SessionStore {
   private readonly sessions = new Map<string, SessionState>();
 
@@ -122,12 +127,14 @@ export class MockMessagingProvider implements MessagingProvider {
 }
 
 export class PlaywrightMessagingProvider implements MessagingProvider {
+  constructor(private readonly session: SessionState) {}
+
   async listThreads(): Promise<ThreadSummary[]> {
-    throw new Error('Playwright provider is not implemented yet. Use the fake provider in Phase 8.');
+    throw new Error(`Playwright provider is not implemented yet for account ${this.session.accountId}.`);
   }
 
   async getThreadMessages(): Promise<MessageRecord[]> {
-    throw new Error('Playwright provider is not implemented yet. Use the fake provider in Phase 8.');
+    throw new Error(`Playwright provider is not implemented yet for account ${this.session.accountId}.`);
   }
 }
 
@@ -152,6 +159,44 @@ const defaultImportFixture = parseThreadFixture(`
 export async function runFakeImportThreads(payload: unknown) {
   const parsed = importThreadsPayloadSchema.parse(payload);
   const provider = new FakeMessagingProvider([defaultImportFixture]);
+  const threads = await provider.listThreads();
+
+  return importThreadsResultSchema.parse({
+    provider: parsed.provider,
+    accountId: parsed.accountId,
+    itemsScanned: threads.length,
+    itemsImported: threads.length,
+    threadIds: threads.map((thread) => thread.id)
+  });
+}
+
+export async function createBrowserSyncProvider(payload: unknown, options: BrowserSyncOptions): Promise<MessagingProvider> {
+  const parsed = importThreadsPayloadSchema.parse(payload);
+
+  if (!options.enableRealBrowserSync) {
+    throw new Error('Real browser sync is disabled. Enable ENABLE_REAL_BROWSER_SYNC to use session-backed sync.');
+  }
+
+  if (!options.sessionStore) {
+    throw new Error('Real browser sync requires a session store.');
+  }
+
+  const session = await options.sessionStore.load(parsed.accountId);
+
+  if (!session) {
+    throw new Error(`No saved browser session found for account ${parsed.accountId}.`);
+  }
+
+  return new PlaywrightMessagingProvider(session);
+}
+
+export async function runImportThreads(payload: unknown, options: BrowserSyncOptions) {
+  if (!options.enableRealBrowserSync) {
+    return runFakeImportThreads(payload);
+  }
+
+  const parsed = importThreadsPayloadSchema.parse(payload);
+  const provider = await createBrowserSyncProvider(parsed, options);
   const threads = await provider.listThreads();
 
   return importThreadsResultSchema.parse({

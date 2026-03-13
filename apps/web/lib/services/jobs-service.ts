@@ -3,6 +3,8 @@ import {
   enqueueJobInputSchema,
   enqueueJobResultSchema,
   jobDtoSchema,
+  type JobWithAuditDto,
+  manualSyncRequestSchema,
   syncRunDtoSchema
 } from '@mycrm/core';
 import { createDb, createJobRepository, createSyncRunRepository } from '@mycrm/db';
@@ -61,4 +63,24 @@ export async function listSyncRuns(databaseUrl?: string, limit?: number) {
   } finally {
     await sqlite.close();
   }
+}
+
+export async function enqueueManualBrowserSync(input: unknown, databaseUrl?: string) {
+  const parsed = manualSyncRequestSchema.parse(input);
+
+  return enqueueJob(
+    {
+      type: 'import_threads',
+      payload: {
+        provider: parsed.provider,
+        accountId: parsed.accountId
+      }
+    },
+    databaseUrl
+  );
+}
+
+export async function listImportThreadJobs(databaseUrl?: string): Promise<JobWithAuditDto[]> {
+  const jobs = await listJobsWithAudit(databaseUrl);
+  return jobs.filter((entry) => entry.job.type === 'import_threads');
 }

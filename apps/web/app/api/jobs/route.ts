@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { toErrorResponse } from '@mycrm/core';
-import { enqueueJob, listJobsWithAudit, listSyncRuns } from '@/lib/services/jobs-service';
+import { enqueueJob, enqueueManualBrowserSync, listJobsWithAudit, listSyncRuns } from '@/lib/services/jobs-service';
 
 export async function GET() {
   try {
@@ -16,7 +16,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const result = await enqueueJob(body);
+    const mode = new URL(request.url).searchParams.get('mode');
+    const result = mode === 'manual-sync' ? await enqueueManualBrowserSync(body) : await enqueueJob(body);
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     const response = toErrorResponse(error);

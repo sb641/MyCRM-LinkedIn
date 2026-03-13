@@ -1,6 +1,6 @@
 import { getFeatureFlags } from '@mycrm/core';
 import { listInboxItems, getContactConversationDetails } from '@/lib/services/inbox-service';
-import { listSyncRuns } from '@/lib/services/jobs-service';
+import { listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
 import { buildShellDataState, getShellRouteState } from '@/lib/crm-shell';
 import { CrmShell } from './crm-shell';
 
@@ -19,12 +19,14 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       ? await getContactConversationDetails(route.selectedContactId)
       : null;
     const syncRuns = await listSyncRuns(undefined, 5);
+    const jobs = await listImportThreadJobs();
 
     const state = buildShellDataState({
       inbox,
       route,
       details,
-      syncRuns
+      syncRuns,
+      jobs
     });
 
     return <CrmShell state={state} flags={flags} />;
@@ -34,6 +36,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
       route: { selectedContactId: null, selectedConversationId: null, sort: 'recent' },
       details: null,
       syncRuns: [],
+      jobs: [],
       errorMessage: error instanceof Error ? error.message : 'Unknown workspace error'
     });
 

@@ -8,13 +8,16 @@ vi.mock('@/lib/services/inbox-service', () => ({
 }));
 
 vi.mock('@/lib/services/jobs-service', () => ({
-  listSyncRuns: vi.fn()
+  listSyncRuns: vi.fn(),
+  listImportThreadJobs: vi.fn()
 }));
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
   useSearchParams: () => new URLSearchParams('')
 }));
+
+global.fetch = vi.fn();
 
 const inboxItem: InboxItemDto = {
   contactId: 'contact-001',
@@ -97,6 +100,23 @@ describe('HomePage', () => {
     vi.mocked(inboxService.listInboxItems).mockResolvedValue([inboxItem]);
     vi.mocked(inboxService.getContactConversationDetails).mockResolvedValue(details);
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue(syncRuns);
+    vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([
+      {
+        job: {
+          id: 'job-001',
+          type: 'import_threads',
+          status: 'queued',
+          payload: JSON.stringify({ accountId: 'browser-account', provider: 'linkedin-browser' }),
+          attemptCount: 0,
+          lockedAt: null,
+          lastError: null,
+          scheduledFor: null,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        auditEntries: []
+      }
+    ]);
 
     const page = await HomePage({ searchParams: Promise.resolve({}) });
     render(page);
@@ -113,11 +133,15 @@ describe('HomePage', () => {
     expect(screen.getByText('Follow-up')).toBeInTheDocument();
     expect(screen.getByText('Recent sync runs')).toBeInTheDocument();
     expect(screen.getByText('2/3 imported')).toBeInTheDocument();
+    expect(screen.getByText('Queue browser sync')).toBeInTheDocument();
+    expect(screen.getByText('Active sync job')).toBeInTheDocument();
+    expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
   });
 
   it('renders the error state when inbox loading fails', async () => {
     vi.mocked(inboxService.listInboxItems).mockRejectedValue(new Error('Inbox failed'));
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue([]);
+    vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([]);
 
     const page = await HomePage({ searchParams: Promise.resolve({}) });
     render(page);
