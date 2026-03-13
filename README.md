@@ -1,30 +1,31 @@
 # MyCRM-LinkedIn
 
-This repository is being rebuilt into a local-first LinkedIn conversation CRM MVP.
+Local-first LinkedIn conversation CRM MVP built as a TypeScript monorepo.
 
 ## Current status
 
-Phase 8 is the current baseline:
+Current baseline: Phase 10 completed in code, tests, and docs.
 
-- pnpm monorepo
-- Next.js CRM workspace shell
-- worker skeleton
-- shared TypeScript packages
-- env validation with Zod
-- structured logging with Pino
-- feature flags for AI and automation
-- mock adapters as the default integration path
-- SQLite schema, migrations, and deterministic seed data
-- repository, service, and API layers for inbox reads and CRM write mutations
-- route-driven desktop shell with empty and error states
-- CRM presentation layer with derived badges, timestamps, quick actions, and inbox sorting
-- conversation history and draft history panels for the selected contact
-- mock-backed AI draft generation with persisted variants and in-shell preview
-- rule-based follow-up recommendations with due labels and urgency callouts in the shell
-- queue-backed worker flow with job status API, lock recovery, retry scheduling, and per-job audit history
-- automation adapter baseline with fake provider, DOM fixture parsing, session abstraction, guarded Playwright skeleton, mock `import_threads` worker processing, and visible sync run summaries in the CRM shell
+Implemented so far:
 
-The legacy Python automation files remain in the repository for reference during migration, but the new implementation path is TypeScript-first.
+- pnpm monorepo with shared TypeScript packages
+- Next.js CRM workspace shell and local worker runtime
+- env validation, structured logging, and feature flags
+- SQLite schema, migrations, deterministic seed data, and repository/service layers
+- inbox, conversation, CRM status, and draft history workspace
+- mock-backed Gemini draft generation and approval flow
+- rule-based follow-up recommendations
+- queue-backed worker flow with audit history and retry scheduling
+- automation adapter with fake provider, DOM fixture parsing, and guarded Playwright skeleton
+- guarded real browser sync entry path with persistent browser-session bootstrap
+- browser-session readiness, sync-run summaries, and operator-facing sync guidance in the shell
+- user-approved send workflow with queue-send API/UI, worker `send_message` handling, audit trail, and fake-provider validation
+
+Not implemented yet:
+
+- real Playwright browser execution for sync and send remains intentionally stubbed
+- Phase 11 settings, secrets, backup/restore, and security hardening
+- Phase 12 release hardening and runbook work
 
 Primary progress tracker: `docs/implementation-plan.md`
 
@@ -58,6 +59,12 @@ ENABLE_REAL_SEND=false
 LOG_LEVEL=info
 ```
 
+Notes:
+
+- `ENABLE_REAL_BROWSER_SYNC=true` unlocks the guarded browser-session-backed sync path.
+- `ENABLE_REAL_SEND=true` unlocks the guarded browser-send seam.
+- Even with both flags enabled, real Playwright execution is still intentionally not implemented.
+
 ## Commands
 
 ```bash
@@ -70,69 +77,53 @@ pnpm test
 pnpm build
 ```
 
-## Current acceptance checklist
-
-- monorepo boots with pnpm
-- web app exposes `/api/health`
-- worker starts locally
-- feature flags are visible in the app shell
-- inbox and contact detail routes return seeded CRM data
-- CRM workspace shell renders from live service data
-- CRM shell derives attention priority, relationship signals, and quick actions from seeded data
-- draft generation API persists generated variants into SQLite-backed draft records
-- follow-up timing and next-step guidance are derived from CRM activity in the presentation layer
-- queued jobs can be listed through the local jobs API and processed by the worker runtime
-- queued jobs returned by the local jobs API include audit entries for enqueue, claim, retry, failure, and success transitions
-- the automation package can parse deterministic thread fixtures and expose fake thread/message data without a real browser session
-- lint, typecheck, tests, and build pass
-- the real send method remains an explicit product decision to be discussed with the user before Phase 10 implementation
-
-## Phase 1 database workflow
+Focused validation commands used for the latest phases:
 
 ```bash
-pnpm db:migrate
-pnpm db:seed
-pnpm test:integration
+pnpm --filter @mycrm/automation test
+pnpm --filter @mycrm/worker test -- --run src/index.test.ts
+pnpm --filter @mycrm/web test -- --run app/page.test.tsx lib/crm-shell.test.ts app/api/browser-session/route.test.ts app/api/jobs/route.test.ts
+pnpm --filter @mycrm/web test -- --run lib/services/crm-service.test.ts app/api/drafts/[draftId]/send/route.test.ts app/page.test.tsx
 ```
 
-Schema, migrations, and progress tracking live in `packages/db` and `docs/implementation-plan.md`.
+## Current product flow
 
-## Phase 5 workspace flow
+### CRM workspace
 
-- `/` loads the CRM workspace shell
-- the server page loads inbox items and resolves the selected conversation from query params
-- `contactId` and `conversationId` drive selection state
-- `sort` preserves inbox ordering in the URL
-- the shell derives CRM badges, timestamps, and next-step actions in a presentation layer
-- the main workspace renders contact summary, conversation history, and draft history from live service data
-- the draft panel can request mock Gemini variants from the current conversation context
-- generated variants are persisted into the existing draft tables and previewed in the shell before approval
-- the shell supports ready, empty, and error states for later AI and automation expansion
+- `/` loads the CRM workspace shell.
+- `contactId`, `conversationId`, and `sort` in the URL drive selection and inbox ordering.
+- the shell renders contact summary, conversation history, draft history, follow-up guidance, and quick actions from live service data.
 
-## Phase 6 follow-up flow
+### Browser sync flow
 
-- the contact summary derives follow-up timing from the latest reply/sent/interaction timestamps
-- the shell shows a follow-up label and urgency callout when outreach is due or overdue
-- quick actions now prioritize follow-up work before deeper automation is introduced in later phases
+- the shell can queue manual browser sync through `/api/jobs?mode=manual-sync`
+- browser sessions can be saved and inspected through `/api/browser-session`
+- the worker reads saved sessions from the shared file-backed session store
+- when no saved session exists, the worker records a failed `sync_run` and schedules retry
+- operator-facing sync guidance is normalized in the shell
 
-## Phase 7 jobs and worker flow
+### Send flow
 
-- the worker runs as a separate local Node process via `pnpm dev:worker`
-- queued jobs are stored in SQLite and exposed through `/api/jobs`
-- the current worker slice claims the next queued job, recovers stale locks, reschedules retryable failures before terminal failure, and records each lifecycle transition in `audit_log`
-- `/api/jobs` now returns each job together with its audit trail for local observability
-- this queue path is validated with both db-level persistence coverage and worker integration tests
+- approved drafts can be queued through `/api/drafts/[draftId]/send`
+- the shell exposes `Queue send` for approved drafts
+- the worker processes `send_message` jobs through the automation send seam
+- queue dedupe prevents multiple active `send_message` jobs for the same `draftId`
+- already-sent drafts are guarded against duplicate-send retries
+- fake-provider coverage validates the queue -> worker -> mutation path without Playwright
 
-## Phase 8 automation adapter flow
+## Next phase
 
-- `packages/automation` now defines the messaging provider contract for thread listing and message loading
-- the fake provider is backed by deterministic DOM fixtures so automation behavior can be tested locally without LinkedIn access
-- deterministic mock import helpers now let the worker simulate thread sync jobs without a real browser session
-- a session store abstraction is in place for later browser-backed providers
-- the Playwright provider is present only as a guarded skeleton and is intentionally not active yet
-- `import_threads` jobs can now be processed by the worker and recorded into `sync_runs` for local observability
-- recent sync runs are now exposed through the local jobs service/API path and rendered in the shell
+Next planned phase: Phase 11.
+
+Scope:
+
+- Settings UI
+- Secret storage
+- Backup/export
+- Restore/import
+- Log redaction
+- Tests and docs update
 
 ## Legacy code
 
-The previous Python implementation is still present in the root for migration reference. It is not part of the new Phase 0 runtime.
+The previous Python implementation is still present in the root for migration reference. It is not part of the new TypeScript runtime.

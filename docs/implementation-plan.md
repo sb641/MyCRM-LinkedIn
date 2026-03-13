@@ -32,9 +32,9 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
 | [x] | 7 | Jobs, Worker, and Queueing | Completed and validated |
 | [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
-| [-] | 9 | Real Browser-Assisted Sync | In progress: guarded browser entry, manual sync enqueue, and active sync state tracking are complete |
-| [ ] | 10 | User-Approved Send Workflow | Pending |
-| [ ] | 11 | Settings, Secrets, Security, Backup/Restore | Pending |
+| [x] | 9 | Real Browser-Assisted Sync | Completed in code, tests, and docs; real Playwright execution remains intentionally stubbed |
+| [x] | 10 | User-Approved Send Workflow | Completed in code, tests, and docs with guarded browser-send seam and fake-provider validation |
+| [ ] | 11 | Settings, Secrets, Security, Backup/Restore | Next phase |
 | [ ] | 12 | Hardening, Performance, QA, and Release | Pending |
 
 ## Phase 0
@@ -52,7 +52,6 @@ Deliverables:
 - env validation
 - CI pipeline
 - health page / app shell
-- logging setup
 
 Acceptance checklist:
 - [x] Initialize monorepo with `pnpm`
@@ -261,7 +260,7 @@ Review gate:
 
 ## Phase 9
 
-Status: `[-] In progress`
+Status: `[x] Completed`
 
 Goal:
 Add a guarded real browser-assisted sync path without breaking the local-first fake-provider workflow.
@@ -270,52 +269,50 @@ Implementation checklist:
 - [x] Guarded real-browser sync entry path with fake fallback
 - [x] Manual browser sync enqueue API and shell action
 - [x] Active sync job state tracking and error visibility in the CRM shell
-- [ ] Session-backed browser auth/bootstrap flow
-- [ ] Browser sync result reconciliation and richer operator UX
-- [ ] Docs update for completed Phase 9 scope
+- [x] Session-backed browser auth/bootstrap flow
+- [x] Browser sync result reconciliation and richer operator UX
+- [x] Session bootstrap/save API and persistent session store
+- [x] Browser session readiness and richer operator sync status in the CRM shell
+- [x] Error handling
+- [x] Mock/integration tests and manual smoke notes
+- [x] Docs update for completed Phase 9 scope
 
 Validation:
-- [x] `pnpm --filter @mycrm/web test`
-- [x] `pnpm test`
-- [x] `pnpm typecheck`
-- [ ] Discuss real send approach options with user before Phase 10 implementation
-
-## Phase 9
-
-Status: `[-] In progress`
-
-Goal:
-Connect real browser-assisted sync for manual import.
-
-Implementation checklist:
-- [x] Real browser sync feature flag
-- [x] Session loading guard path
-- [x] Manual sync action
-- [x] Sync run tracking
-- [ ] Error handling
-- [ ] Mock/integration tests and manual smoke notes
-- [ ] Docs update
+- [x] `pnpm --filter @mycrm/automation test`
+- [x] `pnpm --filter @mycrm/worker test -- --run src/index.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run app/api/browser-session/route.test.ts app/api/jobs/route.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run app/page.test.tsx lib/crm-shell.test.ts app/api/browser-session/route.test.ts app/api/jobs/route.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run lib/crm-shell.test.ts app/page.test.tsx`
 
 ## Phase 10
 
-Status: `[ ] Not started`
+Status: `[x] Completed`
 
 Goal:
 Allow explicit user-approved sending through the provider.
 
 Decision gate:
-- Before implementing real sending, prepare options for the user and agree on the send method.
-- Candidate options must include at least browser UI automation via Playwright, browser-assisted manual send, and a hybrid provider approach.
-- Do not hard-code the real send path until the user selects the preferred option.
+- [x] Discussed send-path options with the user before implementation.
+- [x] User selected the browser-driven send path.
 
 Implementation checklist:
-- [ ] Send eligibility rules
-- [ ] Queue send job
-- [ ] Worker send execution
-- [ ] Success/failure state handling
-- [ ] Audit trail
-- [ ] Fake provider E2E
-- [ ] Docs update
+- [x] Send eligibility rules
+- [x] Queue send job
+- [x] Worker send execution
+- [x] Success/failure state handling
+- [x] Audit trail
+- [x] Fake provider E2E
+- [x] Queue-send UI and API route
+- [x] Duplicate queue dedupe by `draftId`
+- [x] Duplicate-send safety guard for already-sent drafts
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/automation test`
+- [x] `pnpm --filter @mycrm/worker test -- --run src/index.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run lib/services/crm-service.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run app/api/drafts/[draftId]/send/route.test.ts app/page.test.tsx`
+- [x] `pnpm --filter @mycrm/web test -- --run lib/services/crm-service.test.ts app/api/drafts/[draftId]/send/route.test.ts app/page.test.tsx`
 
 Review gate:
 - [ ] Human review before Phase 11
@@ -356,30 +353,18 @@ Review gate:
 ## Progress Log
 
 ### 2026-03-13
-
-- Phase 0 completed.
-- Monorepo bootstrap, web shell, worker skeleton, env validation, logger, CI, and smoke tests are in place.
-- Phase 1 started.
-- ORM decision: Drizzle + SQLite.
-- Phase 1 completed.
-- Added normalized CRM schema, migrations, deterministic seed data, and integration coverage for cascades, indexes, dedupe, and status separation.
-- Switched the SQLite runtime path to `sql.js` because native `better-sqlite3` and `sqlite3` bindings were not available under the current local `Node v25` environment.
-- Validation passed: `pnpm --filter @mycrm/db typecheck`, `pnpm --filter @mycrm/db test:integration`, and `pnpm test`.
-- Phase 2 started.
-- Added shared DTO schemas and application errors in `packages/core`.
-- Added repository helpers and a transaction helper in `packages/db`.
-- Added inbox/detail service layer and initial read API routes in `apps/web`.
-- For Phase 2 read models, switched repository reads to direct SQL over the existing `sql.js` connection because the current Drizzle `sqlite-proxy` path was unreliable for these joined read queries.
-- Validation passed: `pnpm --filter @mycrm/web test`, `pnpm test`, and `pnpm typecheck`.
-- Phase 3 completed.
-- Added the route-driven CRM shell, desktop layout, and resilient empty/error states.
-- Phase 4 completed.
-- Added CRM presentation models, sorting, badges, timestamps, and quick actions.
-- Phase 5 completed.
-- Added mock-backed AI draft generation, persistence of generated variants, and in-shell review.
-- Phase 6 completed.
-- Added rule-based follow-up recommendations, urgency labels, and next-step guidance in the shell.
-- Phase 7 started.
-- Added the first jobs/worker slice: queue repository methods, worker claim-and-complete cycle, jobs status API, and regression coverage for reopened sqlite connections.
-- Fixed the worker integration test to avoid a false failure caused by keeping a competing sqlite connection open during worker execution.
-- Validation passed: `pnpm --filter @mycrm/db test`, `pnpm --filter @mycrm/worker test`, `pnpm test`, and `pnpm typecheck`.
+- Phase 10 send path completed after the user selected browser-driven sending as the preferred operator flow.
+- Added shared send DTOs, queue-send service wiring, worker `send_message` handling, and guarded browser-send automation seam.
+- Added CRM shell `Queue send` action and dedicated `/api/drafts/[draftId]/send` route with focused route/page coverage.
+- Added worker duplicate-send safety coverage and stabilized worker fixtures so send tests run against deterministic seeded domain data.
+- Added `send_message` enqueue deduplication for the same approved draft across `queued`, `running`, and `retry_scheduled` jobs.
+- Added draft-level send audit events and a fake-provider send path that can complete the full queue -> worker -> mutation flow without Playwright.
+- Validation passed: `pnpm --filter @mycrm/automation test`, `pnpm --filter @mycrm/worker test -- --run src/index.test.ts`, and `pnpm --filter @mycrm/web test -- --run lib/services/crm-service.test.ts app/api/drafts/[draftId]/send/route.test.ts app/page.test.tsx`.
+- Phase 9 completed.
+- Added a persistent file-backed browser session store in `packages/automation` so the web app and worker share the same saved session source.
+- Added `/api/browser-session` in `apps/web` for saving and reading session bootstrap payloads by account ID.
+- Updated the worker to use the persistent session store for guarded real-browser sync attempts instead of an ephemeral in-memory store.
+- The CRM shell now surfaces saved browser-session readiness, browser agent metadata, richer sync-run summaries, and normalized operator guidance for missing or stale sessions.
+- Added worker coverage for the saved-session real-browser path so Phase 9 verifies both the missing-session guard and the persisted-session handoff into the not-yet-implemented browser provider.
+- Added manual smoke notes for saving a browser session, queueing manual sync, and verifying operator-facing retry guidance while real browser execution remains intentionally stubbed.
+- Validation passed: `pnpm --filter @mycrm/automation test`, `pnpm --filter @mycrm/worker test -- --run src/index.test.ts`, and `pnpm --filter @mycrm/web test -- --run app/page.test.tsx lib/crm-shell.test.ts app/api/browser-session/route.test.ts app/api/jobs/route.test.ts`.
