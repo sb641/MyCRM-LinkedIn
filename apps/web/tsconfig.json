@@ -2,12 +2,19 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "plugins": [{ "name": "next" }],
-    "incremental": true
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"],
+      "@mycrm/core": ["../../packages/core/src/index.ts"],
+      "@mycrm/db": ["../../packages/db/src/index.ts"]
+    }
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
+    "../../packages/db/src/sqljs.d.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules", "**/*.test.ts", "**/*.test.tsx"]

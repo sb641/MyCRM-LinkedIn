@@ -5,8 +5,13 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "declaration": true,
-    "noEmit": false
+    "noEmit": false,
+    "baseUrl": ".",
+    "paths": {
+      "@mycrm/core": ["../../packages/core/src/index.ts"],
+      "@mycrm/db": ["../../packages/db/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../../packages/db/src/sqljs.d.ts"],
   "exclude": ["src/**/*.test.ts"]
 }

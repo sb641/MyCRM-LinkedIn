@@ -16,3 +16,4 @@ __pycache__/
 *.bat
 token_linkedin.pickle
 .env
+*.db

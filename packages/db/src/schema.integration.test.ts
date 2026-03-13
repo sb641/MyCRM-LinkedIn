@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createDb } from './client';
+import { createJobRepository } from './repositories';
 import { contacts, conversations, drafts, messages } from './schema';
 import { buildSeedData } from './seed-data';
 
@@ -113,5 +114,35 @@ describe('Phase 1 schema', () => {
     expect(storedDraft?.draft_status).toBe('approved');
     expect(storedDraft?.send_status).toBe('queued');
     await sqlite.close();
+  });
+
+  it('persists job status updates across reopened connections', async () => {
+    const databaseUrl = `file:${createTempDbPath('job-persistence')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    let enqueuedJobId = '';
+
+    try {
+      const repository = createJobRepository(db, sqlite);
+      const enqueued = await repository.enqueueJob('generate_draft', { contactId: 'contact-001' });
+      enqueuedJobId = enqueued.jobId;
+      const claimed = await repository.claimNextJob();
+
+      expect(claimed?.id).toBe(enqueued.jobId);
+
+      await repository.markJobSucceeded(enqueued.jobId);
+    } finally {
+      await sqlite.close();
+    }
+
+    const reopened = await createDb(databaseUrl);
+
+    try {
+      const jobs = await createJobRepository(reopened.db, reopened.sqlite).listJobs();
+      const persistedJob = jobs.find((job) => job.id === enqueuedJobId);
+
+      expect(persistedJob?.status).toBe('succeeded');
+    } finally {
+      await reopened.sqlite.close();
+    }
   });
 });

@@ -21,7 +21,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, '.'),
-      '@mycrm/core': path.resolve(__dirname, '../../packages/core/src/index.ts')
+      '@mycrm/core': path.resolve(__dirname, '../../packages/core/src/index.ts'),
+      '@mycrm/db': path.resolve(__dirname, '../../packages/db/src/index.ts')
     }
   }
 });

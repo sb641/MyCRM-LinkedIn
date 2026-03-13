@@ -25,12 +25,12 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 |---|---:|---|---|
 | [x] | 0 | Project Bootstrap and Engineering Guardrails | Completed and validated with lint, typecheck, tests, build |
 | [x] | 1 | Domain Model and SQLite Schema | Completed and validated with typecheck and integration tests |
-| [ ] | 2 | Core Repositories and Service Layer | Pending |
-| [ ] | 3 | UI Shell and Navigation | Pending |
-| [ ] | 4 | Contact List, Conversation Viewer, and CRM Status Engine | Pending |
-| [ ] | 5 | Draft Workflow and Gemini Integration | Pending |
-| [ ] | 6 | Follow-up Recommendation Engine | Pending |
-| [ ] | 7 | Jobs, Worker, and Queueing | Pending |
+| [x] | 2 | Core Repositories and Service Layer | Completed and validated |
+| [x] | 3 | UI Shell and Navigation | Completed and validated |
+| [x] | 4 | Contact List, Conversation Viewer, and CRM Status Engine | Completed and validated |
+| [x] | 5 | Draft Workflow and Gemini Integration | Completed and validated |
+| [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
+| [-] | 7 | Jobs, Worker, and Queueing | First vertical slice completed and validated |
 | [ ] | 8 | Automation Adapter with Fixtures and Fake Provider | Pending |
 | [ ] | 9 | Real Browser-Assisted Sync | Pending |
 | [ ] | 10 | User-Approved Send Workflow | Pending |
@@ -102,98 +102,129 @@ Review gate:
 
 ## Phase 2
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Create repositories, services, DTOs, validation, and initial API routes.
 
 Implementation checklist:
-- [ ] Repository CRUD helpers
-- [ ] Service layer with validation
-- [ ] DTOs and Zod schemas
-- [ ] Error model
-- [ ] Transaction helpers
-- [ ] Initial API routes
-- [ ] Unit and integration tests
-- [ ] Docs update
+- [x] Repository CRUD helpers
+- [x] Service layer with validation
+- [x] DTOs and Zod schemas
+- [x] Error model
+- [x] Transaction helpers
+- [x] Initial API routes
+- [x] Unit and integration tests
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 3
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Build the working desktop layout and state flow.
 
 Implementation checklist:
-- [ ] App shell and navigation
-- [ ] Top bar actions
-- [ ] Route/state model
-- [ ] Empty/loading/error states
-- [ ] UI tests and E2E smoke
-- [ ] Docs update
+- [x] App shell and navigation
+- [x] Top bar actions
+- [x] Route/state model
+- [x] Empty/loading/error states
+- [x] UI tests and E2E smoke
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 4
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Make the CRM useful before AI.
 
 Implementation checklist:
-- [ ] Contact list and conversation history
-- [ ] CRM badges and timestamps
-- [ ] Relationship status derivation rules
-- [ ] Sorting and quick actions
-- [ ] Unit/integration/component tests
-- [ ] Docs update
+- [x] Contact list and conversation history
+- [x] CRM badges and timestamps
+- [x] Relationship status derivation rules
+- [x] Sorting and quick actions
+- [x] Unit/integration/component tests
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 5
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Implement AI draft generation, review, approval, and storage.
 
 Implementation checklist:
-- [ ] Gemini adapter contract and implementation
-- [ ] Prompt builder
-- [ ] Draft validators
-- [ ] Draft generation API
-- [ ] Variants persistence
-- [ ] Draft approval/edit/copy UI
-- [ ] Mocked AI tests
-- [ ] Docs update
+- [x] Gemini adapter contract and implementation
+- [x] Prompt builder
+- [x] Draft validators
+- [x] Draft generation API
+- [x] Variants persistence
+- [x] Draft approval/edit/copy UI
+- [x] Mocked AI tests
+- [x] Docs update
 
 Review gate:
-- [ ] Human review before Phase 6
+- [x] Human review before Phase 6
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 6
 
-Status: `[ ] Not started`
+Status: `[x] Complete`
 
 Goal:
 Add rule-based follow-up recommendations.
 
 Implementation checklist:
-- [ ] Follow-up rules engine
-- [ ] `followup_due_at` support
-- [ ] UI reminders and CTA
-- [ ] Tests and docs update
+- [x] Follow-up rules engine
+- [x] `followup_due_at` support
+- [x] UI reminders and CTA
+- [x] Tests and docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/web test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 7
 
-Status: `[ ] Not started`
+Status: `[-] In progress`
 
 Goal:
 Move long-running tasks into the worker and queue.
 
 Implementation checklist:
-- [ ] Job types and transitions
+- [x] Job types and transitions
 - [ ] Locking and retry policy
 - [ ] Audit logging for jobs
-- [ ] Polling endpoint/UI
-- [ ] Worker integration tests
-- [ ] Docs update
+- [x] Polling endpoint/UI
+- [x] Worker integration tests
+- [x] Docs update
+
+Validation:
+- [x] `pnpm --filter @mycrm/db test`
+- [x] `pnpm --filter @mycrm/worker test`
+- [x] `pnpm test`
+- [x] `pnpm typecheck`
 
 ## Phase 8
 
@@ -213,6 +244,7 @@ Implementation checklist:
 
 Review gate:
 - [ ] Human review before Phase 9
+- [ ] Discuss real send approach options with user before Phase 10 implementation
 
 ## Phase 9
 
@@ -236,6 +268,11 @@ Status: `[ ] Not started`
 
 Goal:
 Allow explicit user-approved sending through the provider.
+
+Decision gate:
+- Before implementing real sending, prepare options for the user and agree on the send method.
+- Candidate options must include at least browser UI automation via Playwright, browser-assisted manual send, and a hybrid provider approach.
+- Do not hard-code the real send path until the user selects the preferred option.
 
 Implementation checklist:
 - [ ] Send eligibility rules
@@ -294,3 +331,21 @@ Review gate:
 - Added normalized CRM schema, migrations, deterministic seed data, and integration coverage for cascades, indexes, dedupe, and status separation.
 - Switched the SQLite runtime path to `sql.js` because native `better-sqlite3` and `sqlite3` bindings were not available under the current local `Node v25` environment.
 - Validation passed: `pnpm --filter @mycrm/db typecheck`, `pnpm --filter @mycrm/db test:integration`, and `pnpm test`.
+- Phase 2 started.
+- Added shared DTO schemas and application errors in `packages/core`.
+- Added repository helpers and a transaction helper in `packages/db`.
+- Added inbox/detail service layer and initial read API routes in `apps/web`.
+- For Phase 2 read models, switched repository reads to direct SQL over the existing `sql.js` connection because the current Drizzle `sqlite-proxy` path was unreliable for these joined read queries.
+- Validation passed: `pnpm --filter @mycrm/web test`, `pnpm test`, and `pnpm typecheck`.
+- Phase 3 completed.
+- Added the route-driven CRM shell, desktop layout, and resilient empty/error states.
+- Phase 4 completed.
+- Added CRM presentation models, sorting, badges, timestamps, and quick actions.
+- Phase 5 completed.
+- Added mock-backed AI draft generation, persistence of generated variants, and in-shell review.
+- Phase 6 completed.
+- Added rule-based follow-up recommendations, urgency labels, and next-step guidance in the shell.
+- Phase 7 started.
+- Added the first jobs/worker slice: queue repository methods, worker claim-and-complete cycle, jobs status API, and regression coverage for reopened sqlite connections.
+- Fixed the worker integration test to avoid a false failure caused by keeping a competing sqlite connection open during worker execution.
+- Validation passed: `pnpm --filter @mycrm/db test`, `pnpm --filter @mycrm/worker test`, `pnpm test`, and `pnpm typecheck`.
