@@ -1,0 +1,23 @@
+{
+  "name": "@mycrm/web",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@mycrm/ai": "workspace:*",
+    "@mycrm/automation": "workspace:*",
+    "@mycrm/core": "workspace:*",
+    "@mycrm/db": "workspace:*",
+    "next": "15.2.2",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  }
+}

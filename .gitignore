@@ -1,4 +1,15 @@
-﻿credentials.json
+﻿node_modules/
+.next/
+dist/
+coverage/
+playwright-report/
+test-results/
+pnpm-lock.yaml
+.turbo/
+.env.local
+.env.test
+*.tsbuildinfo
+credentials.json
 __pycache__/
 *.bak
 *.ps1

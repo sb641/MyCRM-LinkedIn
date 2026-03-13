@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": false,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@mycrm/core/*": ["packages/core/src/*"],
+      "@mycrm/core": ["packages/core/src/index.ts"],
+      "@mycrm/ai/*": ["packages/ai/src/*"],
+      "@mycrm/ai": ["packages/ai/src/index.ts"],
+      "@mycrm/automation/*": ["packages/automation/src/*"],
+      "@mycrm/automation": ["packages/automation/src/index.ts"],
+      "@mycrm/db/*": ["packages/db/src/*"],
+      "@mycrm/db": ["packages/db/src/index.ts"],
+      "@mycrm/test-fixtures/*": ["packages/test-fixtures/src/*"],
+      "@mycrm/test-fixtures": ["packages/test-fixtures/src/index.ts"]
+    }
+  }
+}

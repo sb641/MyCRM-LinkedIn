@@ -1,0 +1,22 @@
+{
+  "name": "@mycrm/db",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json --noEmit false",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "vitest run src/schema.integration.test.ts",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/migrate.ts",
+    "db:seed": "tsx src/seed.ts"
+  },
+  "dependencies": {
+    "@mycrm/core": "workspace:*",
+    "drizzle-orm": "^0.45.1",
+    "sql.js": "^1.14.1"
+  }
+}
