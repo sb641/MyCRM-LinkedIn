@@ -314,17 +314,17 @@ export function CrmShell({ state, flags }: CrmShellProps) {
       <div className="crm-shell">
         <header className="topbar">
           <div>
-            <p className="eyebrow">Phase 8</p>
-            <h1 className="hero-title">LinkedIn CRM Workspace</h1>
-            <p className="hero-copy">The workspace now tracks follow-up timing, draft generation, and mock sync runs through the local worker automation loop.</p>
+            <p className="eyebrow">Inbox</p>
+            <h1 className="hero-title">People-first outreach workspace</h1>
+            <p className="hero-copy">Work conversations, review AI drafts, and keep every outbound message under manual control from one desktop-first workspace.</p>
           </div>
           <div className="topbar-actions" aria-label="Top bar actions">
             <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
-              {isSyncing ? 'Queueing sync...' : 'Sync inbox'}
+              {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
             </button>
             <button className="ghost-button" type="button">New note</button>
             <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!state.details || isGenerating}>
-              {isGenerating ? 'Generating...' : 'Generate draft'}
+              {isGenerating ? 'Generating draft...' : 'Generate Draft'}
             </button>
           </div>
         </header>
@@ -506,11 +506,11 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                   </div>
                   <div className="draft-generator-card">
                     <label className="draft-goal-field">
-                      <span className="eyebrow">Draft goal</span>
+                      <span className="eyebrow">What should this message achieve?</span>
                       <textarea value={draftGoal} onChange={(event) => setDraftGoal(event.target.value)} rows={3} />
                     </label>
                     <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={isGenerating}>
-                      {isGenerating ? 'Generating...' : 'Generate with mock Gemini'}
+                      {isGenerating ? 'Generating draft...' : 'Generate Draft'}
                     </button>
                     {generatedDraft ? <p className="generated-draft-preview">{generatedDraft}</p> : null}
                     {generationError ? <p className="generated-draft-error">{generationError}</p> : null}
@@ -532,7 +532,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                             onClick={() => handleQueueSend(draft.id)}
                             disabled={isQueueingSend === draft.id}
                           >
-                            {isQueueingSend === draft.id ? 'Queueing send...' : 'Queue send'}
+                            {isQueueingSend === draft.id ? 'Sending...' : 'Send Message'}
                           </button>
                         ) : null}
                       </article>
@@ -585,7 +585,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                 <span className="subtle-pill">Phase 11</span>
               </div>
               <div className="stack-copy" aria-label="Settings operator guidance">
-                Export creates a settings snapshot without secrets. Restore expects a valid snapshot payload. Use Reset secret when a stored token should be cleared on the next save.
+                Export creates a workspace snapshot without secrets. Restore expects a valid snapshot payload. Use Reset secret when a stored token should be cleared on the next save.
               </div>
               <div className="settings-list" aria-label="Workspace settings">
                 {state.settings.map((entry) => (
@@ -641,11 +641,11 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                   {isSavingSettings ? 'Saving...' : 'Save settings'}
                 </button>
                 <button className="ghost-button" type="button" onClick={handleExportBackup}>
-                  Export backup
+                  Export Workspace Data
                 </button>
               </div>
               <label className="draft-goal-field">
-                <span>Restore/import payload</span>
+                <span>Restore workspace payload</span>
                 <textarea value={backupPayload} onChange={(event) => setBackupPayload(event.target.value)} rows={8} />
               </label>
               {restorePreview ? (
@@ -685,14 +685,14 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                 Workspace restore with <strong>replace</strong> overwrites contacts, conversations, messages, drafts, jobs, sync runs, audit log, and settings. Type {WORKSPACE_REPLACE_CONFIRMATION} before running that restore mode.
               </p>
               <button className="ghost-button" type="button" onClick={handleImportBackup} disabled={!backupPayload.trim()}>
-                Restore backup
+                Restore Workspace Data
               </button>
               {settingsMessage ? <p className="generated-draft-preview">{settingsMessage}</p> : null}
               {settingsError ? <p className="generated-draft-error">{settingsError}</p> : null}
             </div>
 
             <div className="stack-card">
-              <p className="eyebrow">Manual browser sync</p>
+              <p className="eyebrow">LinkedIn Connection</p>
               {state.browserSession ? (
                 <div className="sync-session-summary" aria-label="Saved browser session">
                   <p>{state.browserSession.statusLabel}</p>
@@ -701,14 +701,14 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                   <p className="conversation-meta">{state.browserSession.userAgentLabel}</p>
                 </div>
               ) : (
-                <p className="stack-copy">No saved browser session yet. Capture one before running real browser sync.</p>
+                <p className="stack-copy">No saved LinkedIn connection yet. Capture one before running a real browser sync.</p>
               )}
               <label className="draft-goal-field">
                 <span>Account ID</span>
                 <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
               </label>
               <button className="accent-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
-                {isSyncing ? 'Queueing sync...' : 'Queue browser sync'}
+                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
               </button>
               {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
               {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
@@ -716,7 +716,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
 
             <div className="stack-card">
               <div className="conversation-row">
-                <p className="eyebrow">Active sync job</p>
+                <p className="eyebrow">Sync in Progress</p>
                 <button className="ghost-button" type="button" onClick={() => window.location.reload()}>
                   Refresh
                 </button>
@@ -731,19 +731,19 @@ export function CrmShell({ state, flags }: CrmShellProps) {
                   {state.activeSyncJob.lastError ? <p className="generated-draft-error">{state.activeSyncJob.lastError}</p> : null}
                 </>
               ) : (
-                <p className="stack-copy">No queued or running browser sync jobs.</p>
+                <p className="stack-copy">No queued or running sync jobs.</p>
               )}
             </div>
 
             <div className="stack-card">
               <div className="conversation-row">
-                <p className="eyebrow">Recent sync runs</p>
+                <p className="eyebrow">Sync History</p>
                 <span className="subtle-pill">{state.syncRuns.length}</span>
               </div>
               {state.syncRuns.length === 0 ? (
                 <p className="stack-copy">No sync runs recorded yet.</p>
               ) : (
-                <div className="sync-run-list" aria-label="Recent sync runs">
+                <div className="sync-run-list" aria-label="Sync history">
                   {state.syncRuns.map((syncRun) => (
                     <article key={syncRun.id} className="draft-card">
                       <div className="conversation-row">

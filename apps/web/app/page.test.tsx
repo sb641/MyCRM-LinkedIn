@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import type { ContactConversationDetailsDto, InboxItemDto, SyncRunDto } from '@mycrm/core';
 import HomePage from './page';
 
+const redirect = vi.fn();
+
 vi.mock('@/lib/services/inbox-service', () => ({
   listInboxItems: vi.fn(),
   getContactConversationDetails: vi.fn()
@@ -20,10 +22,16 @@ vi.mock('@/lib/services/settings-service', () => ({
   listSettings: vi.fn()
 }));
 
-vi.mock('next/navigation', () => ({
-  usePathname: () => '/',
-  useSearchParams: () => new URLSearchParams('')
-}));
+vi.mock('next/navigation', async () => {
+  const actual = await vi.importActual<typeof import('next/navigation')>('next/navigation');
+
+  return {
+    ...actual,
+    usePathname: () => '/inbox',
+    useSearchParams: () => new URLSearchParams(''),
+    redirect
+  };
+});
 
 global.fetch = vi.fn();
 
@@ -117,7 +125,17 @@ const syncRuns: SyncRunDto[] = [
 ];
 
 describe('HomePage', () => {
-  it('renders the Phase 4 shell with CRM metadata and quick actions', async () => {
+  it('redirects root route to inbox', async () => {
+    redirect.mockReset();
+
+    await HomePage();
+
+    expect(redirect).toHaveBeenCalledWith('/inbox');
+  });
+});
+
+describe('InboxPage shell', () => {
+  it('renders the route-based shell with CRM metadata and quick actions', async () => {
     vi.mocked(inboxService.listInboxItems).mockResolvedValue([inboxItem]);
     vi.mocked(inboxService.getContactConversationDetails).mockResolvedValue(details);
     vi.mocked(browserSessionService.getBrowserSession).mockResolvedValue({
@@ -149,10 +167,12 @@ describe('HomePage', () => {
       }
     ]);
 
-    const page = await HomePage({ searchParams: Promise.resolve({}) });
+    const { default: InboxPage } = await import('./(crm)/inbox/page');
+    const page = await InboxPage({ searchParams: Promise.resolve({}) });
     render(page);
 
-    expect(screen.getByText('LinkedIn CRM Workspace')).toBeInTheDocument();
+    expect(screen.getByText('Outreach Workspace')).toBeInTheDocument();
+    expect(screen.getByText('People-first outreach workspace')).toBeInTheDocument();
     expect(screen.getByText('Conversations')).toBeInTheDocument();
     expect(screen.getByText('Timeline')).toBeInTheDocument();
     expect(screen.getByText('Flags and actions')).toBeInTheDocument();
@@ -160,14 +180,14 @@ describe('HomePage', () => {
     expect(screen.getByText('Review latest draft')).toBeInTheDocument();
     expect(screen.getByText('Drafts')).toBeInTheDocument();
     expect(screen.getByLabelText('Sort conversations')).toBeInTheDocument();
-    expect(screen.getByText('Generate with mock Gemini')).toBeInTheDocument();
+    expect(screen.getAllByText('Generate Draft').length).toBeGreaterThan(0);
     expect(screen.getByText('Follow-up')).toBeInTheDocument();
     expect(screen.getByText('Approved follow-up ready to send')).toBeInTheDocument();
-    expect(screen.getByText('Queue send')).toBeInTheDocument();
-    expect(screen.getByText('Recent sync runs')).toBeInTheDocument();
+    expect(screen.getByText('Send Message')).toBeInTheDocument();
+    expect(screen.getByText('Sync History')).toBeInTheDocument();
     expect(screen.getByText('2/3 imported')).toBeInTheDocument();
-    expect(screen.getByText('Queue browser sync')).toBeInTheDocument();
-    expect(screen.getByText('Active sync job')).toBeInTheDocument();
+    expect(screen.getByText('Sync Conversations')).toBeInTheDocument();
+    expect(screen.getByText('Sync in Progress')).toBeInTheDocument();
     expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
     expect(screen.getByText('Saved browser session ready')).toBeInTheDocument();
     expect(screen.getByText('Chrome 123')).toBeInTheDocument();
@@ -187,7 +207,8 @@ describe('HomePage', () => {
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue([]);
     vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([]);
 
-    const page = await HomePage({ searchParams: Promise.resolve({}) });
+    const { default: InboxPage } = await import('./(crm)/inbox/page');
+    const page = await InboxPage({ searchParams: Promise.resolve({}) });
     render(page);
 
     expect(screen.getByText('Unable to load workspace')).toBeInTheDocument();
