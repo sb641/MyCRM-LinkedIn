@@ -17,6 +17,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const flags = safeGetFeatureFlags();
   const resolvedSearchParams = await searchParams;
 
+  console.time('shell-data-load');
+
   const inboxResult = await safeLoad(() => listInboxItems());
   const inbox = inboxResult.data ?? [];
   const route = getShellRouteState(resolvedSearchParams, inbox);
@@ -27,6 +29,8 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const jobsResult = await safeLoad(() => listImportThreadJobs());
   const browserSessionResult = await safeLoad(() => getBrowserSession('local-account'));
   const settingsResult = await safeLoad(() => listSettings());
+
+  console.timeEnd('shell-data-load');
 
   const errorMessage = [
     inboxResult.error,

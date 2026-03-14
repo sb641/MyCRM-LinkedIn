@@ -361,11 +361,11 @@ Harden the MVP for daily use.
 
 Implementation checklist:
 - [ ] Regression E2E flows
-- [ ] Performance validation
+- [-] Performance validation
 - [x] Error boundaries
-- [ ] Final README and runbook
-- [ ] Docker/local run instructions
-- [ ] Release checklist
+ - [-] Final README and runbook
+ - [ ] Docker/local run instructions
+ - [ ] Release checklist
 
 Current slice status:
 - [x] Global App Router error boundary for unexpected route render failures
@@ -373,10 +373,10 @@ Current slice status:
 - [x] Focused component coverage for the error fallback path
 - [x] Initial Playwright E2E scaffolding and isolated E2E database setup
 - [x] Regression E2E coverage for CRM shell load, settings save/export, manual sync enqueue, approved send enqueue, and guarded workspace restore
-- [ ] Performance validation
-- [ ] Final README and runbook
-- [ ] Docker/local run instructions
-- [ ] Release checklist
+- [-] Performance validation: added baseline server-side data load timer for the main workspace shell
+- [-] Final README and runbook: updated with local runbook instructions
+ - [ ] Docker/local run instructions
+ - [ ] Release checklist
 
 Review gate:
 - [ ] Human review before release
