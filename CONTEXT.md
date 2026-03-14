@@ -14,7 +14,8 @@ This file is the short restart point for a new chat.
 - Phase 0 to Phase 10: completed in code
 - Phase 9: completed with persistent browser-session bootstrap, guarded browser sync entry path, shell readiness state, and operator-facing sync guidance
 - Phase 10: completed with queue-send API/UI, worker `send_message` handling, send audit trail, queue dedupe, duplicate-send safety guard, and fake-provider validation
-- Next phase: Phase 11
+- Phase 11: completed with settings UI/API, explicit secret reset controls, local secret storage, workspace-scoped backup export/restore semantics, redaction, import/reset hardening, secret-preservation coverage, and restore review safeguards
+- Phase 12: not started yet
 
 ## Important constraints
 
@@ -25,13 +26,12 @@ This file is the short restart point for a new chat.
 
 ## Recommended next work
 
-Start Phase 11:
+Start Phase 12 from the current baseline:
 
-1. Settings UI
-2. Secret storage
-3. Backup/export and restore/import
-4. Log redaction
-5. Tests and docs update
+1. Add regression E2E coverage for the main CRM, sync, send, and settings flows
+2. Add error boundaries and broader hardening for daily local use
+3. Finalize README/runbook and local release instructions
+4. Prepare the release checklist and human review gate
 
 ## Key docs
 

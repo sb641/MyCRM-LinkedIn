@@ -4,7 +4,7 @@ Local-first LinkedIn conversation CRM MVP built as a TypeScript monorepo.
 
 ## Current status
 
-Current baseline: Phase 10 completed in code, tests, and docs.
+Current baseline: Phase 11 completed. Phase 12 has started with web error-boundary hardening.
 
 Implemented so far:
 
@@ -20,12 +20,12 @@ Implemented so far:
 - guarded real browser sync entry path with persistent browser-session bootstrap
 - browser-session readiness, sync-run summaries, and operator-facing sync guidance in the shell
 - user-approved send workflow with queue-send API/UI, worker `send_message` handling, audit trail, and fake-provider validation
+- completed Phase 11 settings/security slice with settings panel, explicit secret reset controls, local secret storage, backup/restore API with workspace-scoped export and restore semantics, log redaction, import/reset hardening, and restore review safeguards
 
 Not implemented yet:
 
 - real Playwright browser execution for sync and send remains intentionally stubbed
-- Phase 11 settings, secrets, backup/restore, and security hardening
-- Phase 12 release hardening and runbook work
+- remaining Phase 12 release hardening, regression coverage, and runbook work
 
 Primary progress tracker: `docs/implementation-plan.md`
 
@@ -113,16 +113,35 @@ pnpm --filter @mycrm/web test -- --run lib/services/crm-service.test.ts app/api/
 
 ## Next phase
 
-Next planned phase: Phase 11.
+Current active phase: Phase 12.
 
 Scope:
 
-- Settings UI
-- Secret storage
-- Backup/export
-- Restore/import
-- Log redaction
-- Tests and docs update
+- Regression E2E coverage for CRM, sync, send, and settings flows
+- Error boundaries and broader hardening for daily local use
+- Final README/runbook and local release instructions
+- Release checklist and human review gate
+
+Implemented in the current Phase 12 slice:
+
+- global App Router error boundary for unexpected route render failures
+- operator-facing retry action and failure details in the fallback UI
+- focused component coverage for the error fallback path
+- initial Playwright configuration for web regression coverage
+- isolated Playwright E2E database setup for deterministic local regression runs
+- CRM shell regression E2E covering workspace load, settings save/export, manual sync enqueue, approved send enqueue, and guarded workspace restore
+
+Implemented in the current Phase 11 slice:
+
+- `/api/settings` for listing and updating local settings
+- `/api/backup` for exporting and importing settings snapshots, including `scope=workspace` export and workspace merge/replace restore handling
+- local file-backed secret storage with redacted secret display in the shell
+- recursive structured-log redaction for common secret and session fields
+- stricter import validation for duplicate keys and empty secret payloads
+- secret reset support that clears stored secrets without removing the setting key
+- explicit shell controls for marking secret values for reset before save
+- db integration coverage for workspace export plus merge/replace restore semantics
+- restore payload preview with scope/mode/count review and destructive replace confirmation in the shell
 
 ## Legacy code
 

@@ -5,6 +5,7 @@ import type {
   JobWithAuditDto,
   RelationshipStatus,
   SendStatus,
+  SettingValueDto,
   SyncRunDto
 } from '@mycrm/core';
 
@@ -76,6 +77,7 @@ export type ShellDataState = {
   inbox: InboxListItemViewModel[];
   selectedItem: InboxListItemViewModel | null;
   details: ConversationDetailsViewModel | null;
+  settings: SettingValueDto[];
   syncRuns: SyncRunViewModel[];
   activeSyncJob: SyncJobViewModel | null;
   browserSession: BrowserSessionViewModel | null;
@@ -153,6 +155,7 @@ export function buildShellDataState(args: {
   details: ContactConversationDetailsDto | null;
   syncRuns?: SyncRunDto[];
   jobs?: JobWithAuditDto[];
+  settings?: SettingValueDto[];
   browserSession?: {
     accountId: string;
     capturedAt: number;
@@ -163,6 +166,7 @@ export function buildShellDataState(args: {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
   const selectedItem = inbox.find((item) => item.contactId === args.route.selectedContactId) ?? null;
   const details = args.details ? buildConversationDetailsViewModel(args.details) : null;
+  const settings = args.settings ?? [];
   const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
   const activeSyncJob = buildActiveSyncJobViewModel(args.jobs ?? []);
   const browserSession = buildBrowserSessionViewModel(args.browserSession ?? null);
@@ -173,6 +177,7 @@ export function buildShellDataState(args: {
       inbox,
       selectedItem,
       details: null,
+      settings,
       syncRuns,
       activeSyncJob,
       browserSession,
@@ -187,6 +192,7 @@ export function buildShellDataState(args: {
       inbox: [],
       selectedItem: null,
       details: null,
+      settings,
       syncRuns,
       activeSyncJob,
       browserSession,
@@ -200,6 +206,7 @@ export function buildShellDataState(args: {
     inbox,
     selectedItem,
     details,
+    settings,
     syncRuns,
     activeSyncJob,
     browserSession,

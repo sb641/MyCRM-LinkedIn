@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createDb } from './client';
-import { createJobRepository, createSyncRunRepository } from './repositories';
+import { createJobRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
 import { contacts, conversations, drafts, messages } from './schema';
 import { buildSeedData } from './seed-data';
 
@@ -243,6 +243,298 @@ describe('Phase 1 schema', () => {
         itemsScanned: 1,
         itemsImported: 1
       });
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('stores secrets outside the settings table and returns redacted values by default', async () => {
+    const databaseUrl = `file:${createTempDbPath('settings-secrets')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'gemini_api_key', value: 'super-secret-key', isSecret: true },
+        { key: 'followup_days', value: '9', isSecret: false }
+      ]);
+
+      const settingsRows = await sqlite.all<{ key: string; value: string; is_secret: number }>(
+        "SELECT key, value, is_secret FROM settings WHERE key IN ('gemini_api_key', 'followup_days') ORDER BY key ASC"
+      );
+      const listed = await repository.listSettings();
+      const exported = await repository.exportSettings(true);
+
+      expect(settingsRows.find((row) => row.key === 'gemini_api_key')?.value).toBe('__secret__');
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')?.redactedValue).toContain('*');
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('');
+      expect(exported.values.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('super-secret-key');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('exports a workspace snapshot with seeded data', async () => {
+    const databaseUrl = `file:${createTempDbPath('workspace-export')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts);
+      await db.insert(conversations).values(seed.conversations);
+      await db.insert(messages).values(seed.messages);
+      await db.insert(drafts).values(seed.drafts);
+
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'followup_days', value: '9', isSecret: false },
+        { key: 'gemini_api_key', value: 'super-secret-key', isSecret: true }
+      ]);
+
+      const snapshot = await repository.exportWorkspace(false);
+
+      expect(snapshot.scope).toBe('workspace');
+      expect(snapshot.data.contacts.length).toBeGreaterThan(0);
+      expect(snapshot.data.conversations.length).toBeGreaterThan(0);
+      expect(snapshot.settings.length).toBeGreaterThan(0);
+      expect(snapshot.settings.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('replaces workspace data from a snapshot in replace mode', async () => {
+    const databaseUrl = `file:${createTempDbPath('workspace-restore-replace')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 2));
+      await db.insert(conversations).values(seed.conversations.slice(0, 2));
+      await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 2));
+      await db.insert(drafts).values(seed.drafts.slice(0, 1));
+
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([{ key: 'followup_days', value: '9', isSecret: false }]);
+
+      await repository.importWorkspace({
+        version: 1,
+        scope: 'workspace',
+        mode: 'replace',
+        settings: [{ key: 'followup_days', value: '14', isSecret: false }],
+        data: {
+          contacts: [seed.contacts[5]],
+          conversations: [seed.conversations[5]],
+          messages: seed.messages.filter((message) => message.conversationId === seed.conversations[5].id).slice(0, 1),
+          drafts: [],
+          draftVariants: [],
+          jobs: [],
+          syncRuns: [],
+          auditLog: []
+        }
+      });
+
+      const [contactCount] = await sqlite.all<{ count: number }>('SELECT count(*) AS count FROM contacts');
+      const [conversationCount] = await sqlite.all<{ count: number }>('SELECT count(*) AS count FROM conversations');
+      const listed = await repository.listSettings();
+
+      expect(contactCount?.count).toBe(1);
+      expect(conversationCount?.count).toBe(1);
+      expect(listed.find((entry) => entry.key === 'followup_days')?.value).toBe('14');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('merges workspace data from a snapshot in merge mode', async () => {
+    const databaseUrl = `file:${createTempDbPath('workspace-restore-merge')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 1));
+      await db.insert(conversations).values(seed.conversations.slice(0, 1));
+      await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
+
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([{ key: 'followup_days', value: '9', isSecret: false }]);
+
+      await repository.importWorkspace({
+        version: 1,
+        scope: 'workspace',
+        mode: 'merge',
+        settings: [{ key: 'default_account_id', value: 'account-2', isSecret: false }],
+        data: {
+          contacts: [seed.contacts[1]],
+          conversations: [seed.conversations[1]],
+          messages: seed.messages.filter((message) => message.conversationId === seed.conversations[1].id).slice(0, 1),
+          drafts: [],
+          draftVariants: [],
+          jobs: [],
+          syncRuns: [],
+          auditLog: []
+        }
+      });
+
+      const [contactCount] = await sqlite.all<{ count: number }>('SELECT count(*) AS count FROM contacts');
+      const listed = await repository.listSettings();
+
+      expect(contactCount?.count).toBe(2);
+      expect(listed.find((entry) => entry.key === 'followup_days')?.value).toBe('9');
+      expect(listed.find((entry) => entry.key === 'default_account_id')?.value).toBe('account-2');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('supports resetting a stored secret without deleting the setting key', async () => {
+    const databaseUrl = `file:${createTempDbPath('settings-reset-secret')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([{ key: 'gemini_api_key', value: 'super-secret-key', isSecret: true }]);
+      await repository.upsertSettings([{ key: 'gemini_api_key', value: '', isSecret: true, reset: true }]);
+
+      const listed = await repository.listSettings({ includeSecrets: true });
+      const secretEntry = listed.find((entry) => entry.key === 'gemini_api_key');
+
+      expect(secretEntry?.value).toBe('');
+      expect(secretEntry?.redactedValue).toBe('****');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('preserves existing secrets during merge imports when the snapshot omits them', async () => {
+    const databaseUrl = `file:${createTempDbPath('settings-merge-preserve-secret')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'gemini_api_key', value: 'existing-secret', isSecret: true },
+        { key: 'followup_days', value: '9', isSecret: false }
+      ]);
+
+      await repository.importSettings({
+        mode: 'merge',
+        values: [{ key: 'followup_days', value: '12', isSecret: false }]
+      });
+
+      const listed = await repository.listSettings({ includeSecrets: true });
+
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('existing-secret');
+      expect(listed.find((entry) => entry.key === 'followup_days')?.value).toBe('12');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('clears omitted secrets during replace imports', async () => {
+    const databaseUrl = `file:${createTempDbPath('settings-replace-clear-secret')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+
+    try {
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'gemini_api_key', value: 'existing-secret', isSecret: true },
+        { key: 'followup_days', value: '9', isSecret: false }
+      ]);
+
+      await repository.importSettings({
+        mode: 'replace',
+        values: [{ key: 'followup_days', value: '15', isSecret: false }]
+      });
+
+      const listed = await repository.listSettings({ includeSecrets: true });
+
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')).toBeUndefined();
+      expect(listed.find((entry) => entry.key === 'followup_days')?.value).toBe('15');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('clears existing workspace secrets during replace restore when the snapshot omits them', async () => {
+    const databaseUrl = `file:${createTempDbPath('workspace-replace-clear-secret')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 1));
+      await db.insert(conversations).values(seed.conversations.slice(0, 1));
+      await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
+
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'gemini_api_key', value: 'existing-secret', isSecret: true },
+        { key: 'followup_days', value: '9', isSecret: false }
+      ]);
+
+      await repository.importWorkspace({
+        version: 1,
+        scope: 'workspace',
+        mode: 'replace',
+        settings: [{ key: 'followup_days', value: '21', isSecret: false }],
+        data: {
+          contacts: [seed.contacts[2]],
+          conversations: [seed.conversations[2]],
+          messages: seed.messages.filter((message) => message.conversationId === seed.conversations[2].id).slice(0, 1),
+          drafts: [],
+          draftVariants: [],
+          jobs: [],
+          syncRuns: [],
+          auditLog: []
+        }
+      });
+
+      const listed = await repository.listSettings({ includeSecrets: true });
+
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')).toBeUndefined();
+      expect(listed.find((entry) => entry.key === 'followup_days')?.value).toBe('21');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('preserves existing workspace secrets during merge restore when the snapshot omits them', async () => {
+    const databaseUrl = `file:${createTempDbPath('workspace-merge-preserve-secret')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 1));
+      await db.insert(conversations).values(seed.conversations.slice(0, 1));
+      await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
+
+      const repository = createSettingsRepository(db, sqlite);
+      await repository.upsertSettings([
+        { key: 'gemini_api_key', value: 'existing-secret', isSecret: true },
+        { key: 'followup_days', value: '9', isSecret: false }
+      ]);
+
+      await repository.importWorkspace({
+        version: 1,
+        scope: 'workspace',
+        mode: 'merge',
+        settings: [{ key: 'default_account_id', value: 'account-3', isSecret: false }],
+        data: {
+          contacts: [seed.contacts[3]],
+          conversations: [seed.conversations[3]],
+          messages: seed.messages.filter((message) => message.conversationId === seed.conversations[3].id).slice(0, 1),
+          drafts: [],
+          draftVariants: [],
+          jobs: [],
+          syncRuns: [],
+          auditLog: []
+        }
+      });
+
+      const listed = await repository.listSettings({ includeSecrets: true });
+
+      expect(listed.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('existing-secret');
+      expect(listed.find((entry) => entry.key === 'default_account_id')?.value).toBe('account-3');
     } finally {
       await sqlite.close();
     }

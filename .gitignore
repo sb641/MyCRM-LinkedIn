@@ -17,3 +17,9 @@ __pycache__/
 token_linkedin.pickle
 .env
 *.db
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.mycrm/
+apps/web/.mycrm/
+packages/db/.mycrm/

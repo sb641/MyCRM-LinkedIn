@@ -3,22 +3,21 @@ import {
   inboxItemSchema,
   NotFoundError
 } from '@mycrm/core';
-import { createDb, createContactRepository, createInboxRepository } from '@mycrm/db';
+import { createContactRepository, createInboxRepository, getDb } from '@mycrm/db/server';
 
 export async function listInboxItems(databaseUrl?: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createInboxRepository(db, sqlite);
     const items = await repository.listInbox();
     return inboxItemSchema.array().parse(items);
   } finally {
-    await sqlite.close();
   }
 }
 
 export async function getContactConversationDetails(contactId: string, databaseUrl?: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createContactRepository(db, sqlite);
@@ -30,6 +29,5 @@ export async function getContactConversationDetails(contactId: string, databaseU
 
     return contactConversationDetailsSchema.parse(details);
   } finally {
-    await sqlite.close();
   }
 }

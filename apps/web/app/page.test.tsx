@@ -16,6 +16,10 @@ vi.mock('@/lib/services/jobs-service', () => ({
   listImportThreadJobs: vi.fn()
 }));
 
+vi.mock('@/lib/services/settings-service', () => ({
+  listSettings: vi.fn()
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
   useSearchParams: () => new URLSearchParams('')
@@ -97,6 +101,7 @@ const details: ContactConversationDetailsDto = {
 const inboxService = await import('@/lib/services/inbox-service');
 const browserSessionService = await import('@/lib/services/browser-session-service');
 const jobsService = await import('@/lib/services/jobs-service');
+const settingsService = await import('@/lib/services/settings-service');
 
 const syncRuns: SyncRunDto[] = [
   {
@@ -121,6 +126,10 @@ describe('HomePage', () => {
       capturedAt: 10,
       userAgent: 'Chrome 123'
     });
+    vi.mocked(settingsService.listSettings).mockResolvedValue([
+      { key: 'followup_days', value: '7', isSecret: false },
+      { key: 'gemini_api_key', value: '', isSecret: true, redactedValue: '********-key' }
+    ]);
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue(syncRuns);
     vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([
       {
@@ -162,11 +171,19 @@ describe('HomePage', () => {
     expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
     expect(screen.getByText('Saved browser session ready')).toBeInTheDocument();
     expect(screen.getByText('Chrome 123')).toBeInTheDocument();
+    expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('7')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Reset secret' })).toBeInTheDocument();
+    expect(screen.getByLabelText('Settings operator guidance')).toBeInTheDocument();
+    expect(screen.getByText('Leave blank to keep the stored secret')).toBeInTheDocument();
+    expect(screen.getByLabelText('Workspace replace confirmation')).toBeInTheDocument();
+    expect(screen.getByText(/Type REPLACE WORKSPACE before running that restore mode/)).toBeInTheDocument();
   });
 
   it('renders the error state when inbox loading fails', async () => {
     vi.mocked(inboxService.listInboxItems).mockRejectedValue(new Error('Inbox failed'));
     vi.mocked(browserSessionService.getBrowserSession).mockResolvedValue(null);
+    vi.mocked(settingsService.listSettings).mockResolvedValue([]);
     vi.mocked(jobsService.listSyncRuns).mockResolvedValue([]);
     vi.mocked(jobsService.listImportThreadJobs).mockResolvedValue([]);
 

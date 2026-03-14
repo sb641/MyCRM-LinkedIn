@@ -1,14 +1,190 @@
 import { sql } from 'drizzle-orm';
-import type { DatabaseClient, SqliteConnection } from './client';
+import type { NodeDatabaseClient, NodeSqliteConnection } from './server/node-sqlite';
 import { contacts, drafts } from './schema';
-import type { JobType, RelationshipStatus, SendStatus } from '@mycrm/core';
+import type {
+  JobType,
+  RelationshipStatus,
+  RestoreWorkspaceInput,
+  SendStatus,
+  SettingKey,
+  SettingValueDto,
+  WorkspaceBackupSnapshotDto
+} from '@mycrm/core';
+import { redactObject } from '@mycrm/core';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 
 const JOB_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 const JOB_RETRY_DELAY_MS = 30 * 1000;
 const MAX_JOB_ATTEMPTS = 3;
+const SECRET_STORE_DIR = path.resolve(process.cwd(), '.mycrm');
+const SECRET_STORE_PATH = path.join(SECRET_STORE_DIR, 'secrets.json');
+
+type RepositoryDbClient = NodeDatabaseClient;
+type RepositorySqliteConnection = NodeSqliteConnection;
+
+type SecretStore = Partial<Record<SettingKey, { value: string; updatedAt: number }>>;
+
+async function readSecretStore(): Promise<SecretStore> {
+  try {
+    const content = await readFile(SECRET_STORE_PATH, 'utf8');
+    return JSON.parse(content) as SecretStore;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return {};
+    }
+
+    throw error;
+  }
+}
+
+async function writeSecretStore(store: SecretStore) {
+  await mkdir(SECRET_STORE_DIR, { recursive: true });
+  await writeFile(SECRET_STORE_PATH, JSON.stringify(store, null, 2), 'utf8');
+}
+
+async function clearSecretStore() {
+  try {
+    await rm(SECRET_STORE_PATH, { force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      throw error;
+    }
+  }
+}
+
+async function listTableRows<T extends Record<string, unknown>>(sqlite: RepositorySqliteConnection, tableName: string) {
+  return sqlite.all<T>(`SELECT * FROM ${tableName}`);
+}
+
+function normalizeWorkspaceRow(tableName: string, row: Record<string, unknown>) {
+  const columnMap: Record<string, Record<string, string>> = {
+    contacts: {
+      profileUrl: 'profile_url',
+      linkedinProfileId: 'linkedin_profile_id',
+      relationshipStatus: 'relationship_status',
+      lastInteractionAt: 'last_interaction_at',
+      lastReplyAt: 'last_reply_at',
+      lastSentAt: 'last_sent_at',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    conversations: {
+      contactId: 'contact_id',
+      linkedinThreadId: 'linkedin_thread_id',
+      lastMessageDate: 'last_message_date',
+      lastSender: 'last_sender',
+      lastSyncedAt: 'last_synced_at',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    messages: {
+      conversationId: 'conversation_id',
+      linkedinMessageId: 'linkedin_message_id',
+      senderType: 'sender_type',
+      isInbound: 'is_inbound',
+      rawPayload: 'raw_payload',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    drafts: {
+      contactId: 'contact_id',
+      conversationId: 'conversation_id',
+      goalText: 'goal_text',
+      approvedText: 'approved_text',
+      draftStatus: 'draft_status',
+      sendStatus: 'send_status',
+      modelName: 'model_name',
+      approvedAt: 'approved_at',
+      sentAt: 'sent_at',
+      createdAt: 'created_at'
+    },
+    draft_variants: {
+      draftId: 'draft_id',
+      variantIndex: 'variant_index'
+    },
+    jobs: {
+      attemptCount: 'attempt_count',
+      lockedAt: 'locked_at',
+      lastError: 'last_error',
+      scheduledFor: 'scheduled_for',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    sync_runs: {
+      startedAt: 'started_at',
+      finishedAt: 'finished_at',
+      itemsScanned: 'items_scanned',
+      itemsImported: 'items_imported'
+    },
+    audit_log: {
+      entityType: 'entity_type',
+      entityId: 'entity_id',
+      createdAt: 'created_at'
+    }
+  };
+
+  const mapping = columnMap[tableName] ?? {};
+
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [mapping[key] ?? key, value])
+  );
+}
+
+function toSqlLiteral(value: unknown) {
+  if (value === null || value === undefined) {
+    return 'NULL';
+  }
+
+  if (typeof value === 'number' || typeof value === 'bigint') {
+    return String(value);
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? '1' : '0';
+  }
+
+  return `'${JSON.stringify(value).slice(1, -1).replace(/'/g, "''")}'`;
+}
+
+async function replaceTableRows(sqlite: RepositorySqliteConnection, tableName: string, rows: Array<Record<string, unknown>>) {
+  await sqlite.exec(`DELETE FROM ${tableName}`);
+
+  for (const row of rows) {
+    const normalizedRow = normalizeWorkspaceRow(tableName, row);
+    const columns = Object.keys(normalizedRow);
+    if (columns.length === 0) {
+      continue;
+    }
+
+    const values = columns.map((column) => toSqlLiteral(normalizedRow[column]));
+    await sqlite.exec(`INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')})`);
+  }
+}
+
+async function upsertTableRows(sqlite: RepositorySqliteConnection, tableName: string, rows: Array<Record<string, unknown>>) {
+  for (const row of rows) {
+    const normalizedRow = normalizeWorkspaceRow(tableName, row);
+    const columns = Object.keys(normalizedRow);
+    if (columns.length === 0) {
+      continue;
+    }
+
+    const values = columns.map((column) => toSqlLiteral(normalizedRow[column]));
+    await sqlite.exec(`INSERT OR REPLACE INTO ${tableName} (${columns.join(', ')}) VALUES (${values.join(', ')})`);
+  }
+}
+
+function maskSecret(value: string) {
+  if (value.length <= 4) {
+    return '****';
+  }
+
+  return `${'*'.repeat(Math.max(4, value.length - 4))}${value.slice(-4)}`;
+}
 
 async function appendAuditLog(
-  sqlite: SqliteConnection,
+  sqlite: RepositorySqliteConnection,
   args: {
     entityType: string;
     entityId: string;
@@ -43,7 +219,7 @@ async function appendAuditLog(
   `);
 }
 
-export async function withTransaction<T>(db: DatabaseClient, callback: (tx: DatabaseClient) => Promise<T>) {
+export async function withTransaction<T>(db: RepositoryDbClient, callback: (tx: RepositoryDbClient) => Promise<T>) {
   await db.run(sql.raw('BEGIN'));
 
   try {
@@ -56,7 +232,7 @@ export async function withTransaction<T>(db: DatabaseClient, callback: (tx: Data
   }
 }
 
-export function createInboxRepository(_db: DatabaseClient, sqlite: SqliteConnection) {
+export function createInboxRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async listInbox() {
       const rows = await sqlite.all<{
@@ -110,7 +286,7 @@ export function createInboxRepository(_db: DatabaseClient, sqlite: SqliteConnect
   };
 }
 
-export function createContactRepository(_db: DatabaseClient, sqlite: SqliteConnection) {
+export function createContactRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async findContactConversationDetails(contactId: string) {
       const safeContactId = contactId.replace(/'/g, "''");
@@ -250,7 +426,7 @@ export function createContactRepository(_db: DatabaseClient, sqlite: SqliteConne
   };
 }
 
-export function createMutationRepository(db: DatabaseClient, sqlite: SqliteConnection) {
+export function createMutationRepository(db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async updateRelationshipStatus(contactId: string, relationshipStatus: RelationshipStatus) {
       const safeContactId = contactId.replace(/'/g, "''");
@@ -272,12 +448,18 @@ export function createMutationRepository(db: DatabaseClient, sqlite: SqliteConne
       return 1;
     },
 
-    async approveDraft(draftId: string, approvedText: string, sendStatus: SendStatus) {
+    async approveDraft(draftId: string, approvedText: string, sendStatus: SendStatus = 'queued') {
       const safeDraftId = draftId.replace(/'/g, "''");
       const safeApprovedText = approvedText.replace(/'/g, "''");
       const safeSendStatus = sendStatus.replace(/'/g, "''");
       const now = Date.now();
-      const [existing] = await sqlite.all<{ id: string }>(`SELECT id FROM drafts WHERE id = '${safeDraftId}' LIMIT 1`);
+      const rows = await sqlite.all<{ id: string }>(`
+        SELECT id
+        FROM drafts
+        WHERE id = '${safeDraftId}'
+        LIMIT 1
+      `);
+      const existing = rows[0];
 
       if (!existing) {
         return 0;
@@ -292,12 +474,22 @@ export function createMutationRepository(db: DatabaseClient, sqlite: SqliteConne
         WHERE id = '${safeDraftId}'
       `);
 
+      await appendAuditLog(sqlite, {
+        entityType: 'draft',
+        entityId: draftId,
+        action: 'draft.approved',
+        payload: {
+          sendStatus,
+          approvedAt: now
+        }
+      });
+
       return 1;
     },
 
-    async markDraftSent(draftId: string, sentAt?: number) {
+    async markDraftSent(draftId: string) {
       const safeDraftId = draftId.replace(/'/g, "''");
-      const now = sentAt ?? Date.now();
+      const now = Date.now();
       const rows = await sqlite.all<{ id: string; contactId: string }>(`
         SELECT id, contact_id AS contactId
         FROM drafts
@@ -487,7 +679,7 @@ export function createMutationRepository(db: DatabaseClient, sqlite: SqliteConne
   };
 }
 
-export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnection) {
+export function createJobRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async listJobs() {
       return sqlite.all<{
@@ -768,7 +960,7 @@ export function createJobRepository(_db: DatabaseClient, sqlite: SqliteConnectio
   };
 }
 
-export function createSyncRunRepository(_db: DatabaseClient, sqlite: SqliteConnection) {
+export function createSyncRunRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async createSyncRun(args: {
       provider: string;
@@ -837,13 +1029,13 @@ export function createSyncRunRepository(_db: DatabaseClient, sqlite: SqliteConne
       `);
     },
 
-    async listSyncRuns(limit = 10) {
-      const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(100, Math.trunc(limit))) : 10;
+    async listSyncRuns(limit = 20) {
+      const safeLimit = Math.max(1, Math.min(limit, 200));
 
       return sqlite.all<{
         id: string;
         provider: string;
-        status: 'running' | 'succeeded' | 'failed';
+        status: string;
         startedAt: number;
         finishedAt: number | null;
         itemsScanned: number;
@@ -867,8 +1059,168 @@ export function createSyncRunRepository(_db: DatabaseClient, sqlite: SqliteConne
   };
 }
 
+export function createSettingsRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
+  return {
+    async listSettings(options?: { includeSecrets?: boolean }) {
+      const rows = await sqlite.all<{
+        key: SettingKey;
+        value: string;
+        isSecret: number;
+      }>(`
+        SELECT key, value, is_secret AS isSecret
+        FROM settings
+        ORDER BY key ASC
+      `);
+      const secretStore = await readSecretStore();
+
+      return rows.map<SettingValueDto>((row) => {
+        const isSecret = Boolean(row.isSecret);
+        const secretEntry = secretStore[row.key as SettingKey];
+        const rawValue = isSecret ? secretEntry?.value ?? '' : row.value;
+
+        return {
+          key: row.key,
+          value: options?.includeSecrets && isSecret ? rawValue : isSecret ? '' : row.value,
+          isSecret,
+          updatedAt: secretEntry?.updatedAt ?? null,
+          redactedValue: isSecret ? maskSecret(rawValue) : null
+        };
+      });
+    },
+
+    async upsertSettings(values: Array<{ key: SettingKey; value: string; isSecret: boolean; reset?: boolean }>) {
+      const secretStore = await readSecretStore();
+      const now = Date.now();
+
+      for (const entry of values) {
+        const safeKey = entry.key.replace(/'/g, "''");
+        const safeValue = entry.isSecret ? '__secret__' : entry.value.replace(/'/g, "''");
+        const isSecret = entry.isSecret ? 1 : 0;
+
+        await sqlite.exec(`
+          INSERT INTO settings (key, value, is_secret)
+          VALUES ('${safeKey}', '${safeValue}', ${isSecret})
+          ON CONFLICT(key) DO UPDATE SET
+            value = excluded.value,
+            is_secret = excluded.is_secret
+        `);
+
+        if (entry.isSecret) {
+          if (entry.reset) {
+            delete secretStore[entry.key];
+          } else if (entry.value.trim().length > 0) {
+            secretStore[entry.key] = {
+              value: entry.value,
+              updatedAt: now
+            };
+          }
+        }
+      }
+
+      await writeSecretStore(secretStore);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'settings',
+        entityId: 'workspace',
+        action: 'settings.updated',
+        payload: redactObject({
+          keys: values.map((entry) => entry.key),
+          values
+        })
+      });
+    },
+
+    async exportSettings(includeSecrets: boolean) {
+      const values = await this.listSettings({ includeSecrets });
+
+      return {
+        version: 1 as const,
+        exportedAt: Date.now(),
+        values: values.map((entry) => ({
+          ...entry,
+          value: includeSecrets || !entry.isSecret ? entry.value : ''
+        }))
+      };
+    },
+
+    async importSettings(args: {
+      values: Array<{ key: SettingKey; value: string; isSecret: boolean }>;
+      mode: 'merge' | 'replace';
+    }) {
+      if (args.mode === 'replace') {
+        await sqlite.exec('DELETE FROM settings');
+        await clearSecretStore();
+      }
+      await this.upsertSettings(args.values);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'settings',
+        entityId: 'workspace',
+        action: 'settings.imported',
+        payload: {
+          mode: args.mode,
+          count: args.values.length
+        }
+      });
+    },
+
+    async exportWorkspace(includeSecrets: boolean): Promise<WorkspaceBackupSnapshotDto> {
+      const settings = await this.listSettings({ includeSecrets });
+
+      return {
+        version: 1,
+        scope: 'workspace',
+        exportedAt: Date.now(),
+        settings: settings.map((entry) => ({
+          ...entry,
+          value: includeSecrets || !entry.isSecret ? entry.value : ''
+        })),
+        data: {
+          contacts: await listTableRows(sqlite, 'contacts'),
+          conversations: await listTableRows(sqlite, 'conversations'),
+          messages: await listTableRows(sqlite, 'messages'),
+          drafts: await listTableRows(sqlite, 'drafts'),
+          draftVariants: await listTableRows(sqlite, 'draft_variants'),
+          jobs: await listTableRows(sqlite, 'jobs'),
+          syncRuns: await listTableRows(sqlite, 'sync_runs'),
+          auditLog: await listTableRows(sqlite, 'audit_log')
+        }
+      };
+    },
+
+    async importWorkspace(args: RestoreWorkspaceInput) {
+      if (args.mode === 'replace') {
+        await replaceTableRows(sqlite, 'audit_log', args.data.auditLog);
+        await replaceTableRows(sqlite, 'sync_runs', args.data.syncRuns);
+        await replaceTableRows(sqlite, 'jobs', args.data.jobs);
+        await replaceTableRows(sqlite, 'draft_variants', args.data.draftVariants);
+        await replaceTableRows(sqlite, 'drafts', args.data.drafts);
+        await replaceTableRows(sqlite, 'messages', args.data.messages);
+        await replaceTableRows(sqlite, 'conversations', args.data.conversations);
+        await replaceTableRows(sqlite, 'contacts', args.data.contacts);
+        await sqlite.exec('DELETE FROM settings');
+        await clearSecretStore();
+      } else {
+        await upsertTableRows(sqlite, 'contacts', args.data.contacts);
+        await upsertTableRows(sqlite, 'conversations', args.data.conversations);
+        await upsertTableRows(sqlite, 'messages', args.data.messages);
+        await upsertTableRows(sqlite, 'drafts', args.data.drafts);
+        await upsertTableRows(sqlite, 'draft_variants', args.data.draftVariants);
+        await upsertTableRows(sqlite, 'jobs', args.data.jobs);
+        await upsertTableRows(sqlite, 'sync_runs', args.data.syncRuns);
+        await upsertTableRows(sqlite, 'audit_log', args.data.auditLog);
+      }
+
+      await this.importSettings({
+        values: args.settings,
+        mode: args.mode
+      });
+    }
+  };
+}
+
 export async function withSqliteTransaction<T>(
-  sqlite: SqliteConnection,
+  sqlite: RepositorySqliteConnection,
   callback: () => Promise<T>
 ) {
   await sqlite.exec('BEGIN');

@@ -7,7 +7,7 @@ const booleanFlag = z
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required').default('file:./.mycrm/mycrm.sqlite'),
   GEMINI_API_KEY: z.string().optional().default(''),
   ENABLE_AI: booleanFlag,
   ENABLE_AUTOMATION: booleanFlag,

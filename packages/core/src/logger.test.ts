@@ -1,4 +1,5 @@
 import pino from 'pino';
+import { redactObject } from './logger';
 
 describe('logger', () => {
   it('emits structured logs', () => {
@@ -23,5 +24,25 @@ describe('logger', () => {
     const output = chunks.join('');
     expect(output).toContain('"event":"phase0"');
     expect(output).toContain('"msg":"boot"');
+  });
+});
+
+describe('redactObject', () => {
+  it('redacts sensitive keys recursively', () => {
+    expect(
+      redactObject({
+        apiKey: 'secret-value',
+        nested: {
+          sessionToken: 'abc',
+          safe: 'ok'
+        }
+      })
+    ).toEqual({
+      apiKey: '[REDACTED]',
+      nested: {
+        sessionToken: '[REDACTED]',
+        safe: 'ok'
+      }
+    });
   });
 });

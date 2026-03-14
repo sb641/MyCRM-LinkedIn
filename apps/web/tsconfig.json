@@ -7,7 +7,13 @@
     "paths": {
       "@/*": ["./*"],
       "@mycrm/core": ["../../packages/core/src/index.ts"],
-      "@mycrm/db": ["../../packages/db/src/index.ts"]
+      "@mycrm/core/*": ["../../packages/core/src/*"],
+      "@mycrm/automation": ["../../packages/automation/src/index.ts"],
+      "@mycrm/automation/*": ["../../packages/automation/src/*"],
+      "@mycrm/db": ["../../packages/db/src/index.ts"],
+      "@mycrm/db/server": ["../../packages/db/src/server/index.ts"],
+      "@mycrm/db/*": ["../../packages/db/src/*"],
+      "@mycrm/test-fixtures": ["../../packages/test-fixtures/src/index.ts"]
     }
   },
   "include": [

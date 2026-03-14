@@ -34,7 +34,7 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
 | [x] | 9 | Real Browser-Assisted Sync | Completed in code, tests, and docs; real Playwright execution remains intentionally stubbed |
 | [x] | 10 | User-Approved Send Workflow | Completed in code, tests, and docs with guarded browser-send seam and fake-provider validation |
-| [ ] | 11 | Settings, Secrets, Security, Backup/Restore | Next phase |
+| [x] | 11 | Settings, Secrets, Security, Backup/Restore | Completed with settings UI/API, local secret storage, workspace-scoped backup export/restore semantics, redaction, import/reset hardening, and restore review safeguards |
 | [ ] | 12 | Hardening, Performance, QA, and Release | Pending |
 
 ## Phase 0
@@ -319,22 +319,42 @@ Review gate:
 
 ## Phase 11
 
-Status: `[ ] Not started`
+Status: `[x] Completed`
 
 Goal:
 Make the app safe and operable locally.
 
 Implementation checklist:
-- [ ] Settings UI
-- [ ] Secret storage
-- [ ] Backup/export
-- [ ] Restore/import
-- [ ] Log redaction
-- [ ] Tests and docs update
+- [x] Settings UI
+- [x] Secret storage
+- [x] Backup/export
+- [x] Restore/import
+- [x] Log redaction
+- [x] Tests and docs update
+
+Current slice status:
+- [x] Initial settings UI in the CRM shell
+- [x] Local secret storage abstraction with redacted display
+- [x] Settings backup/export and restore/import API routes
+- [x] Recursive structured-log redaction for common sensitive fields
+- [x] Focused tests for settings API, backup API, page rendering, and logger redaction
+- [x] Import validation hardening and explicit secret reset controls in the shell
+- [x] Operator guidance for export/import/reset behavior in the settings panel and manual test plan
+- [x] Secret-preservation and secret-clearing coverage for merge vs replace settings/workspace restores
+- [x] Restore payload preview and destructive replace confirmation safeguards in the shell
+
+Validation:
+- [x] `pnpm --filter @mycrm/core test`
+- [x] `pnpm --filter @mycrm/db test -- --run src/schema.integration.test.ts`
+- [x] `pnpm --filter @mycrm/web test -- --run app/api/settings/route.test.ts app/api/backup/route.test.ts app/page.test.tsx`
+- [x] `pnpm --filter @mycrm/web test -- --run lib/services/settings-service.test.ts`
+
+Review gate:
+- [ ] Human review before Phase 12
 
 ## Phase 12
 
-Status: `[ ] Not started`
+Status: `[-] In progress`
 
 Goal:
 Harden the MVP for daily use.
@@ -342,7 +362,18 @@ Harden the MVP for daily use.
 Implementation checklist:
 - [ ] Regression E2E flows
 - [ ] Performance validation
-- [ ] Error boundaries
+- [x] Error boundaries
+- [ ] Final README and runbook
+- [ ] Docker/local run instructions
+- [ ] Release checklist
+
+Current slice status:
+- [x] Global App Router error boundary for unexpected route render failures
+- [x] Retry affordance and failure details in the fallback UI
+- [x] Focused component coverage for the error fallback path
+- [x] Initial Playwright E2E scaffolding and isolated E2E database setup
+- [x] Regression E2E coverage for CRM shell load, settings save/export, manual sync enqueue, approved send enqueue, and guarded workspace restore
+- [ ] Performance validation
 - [ ] Final README and runbook
 - [ ] Docker/local run instructions
 - [ ] Release checklist
@@ -353,6 +384,25 @@ Review gate:
 ## Progress Log
 
 ### 2026-03-13
+- Phase 12 started with a first hardening slice in the web app.
+- Added a global App Router error boundary in `apps/web/app/error.tsx` so unexpected route render failures land in a controlled fallback instead of a raw crash.
+- Added a retry action plus surfaced error message and digest in the fallback UI for local operator recovery.
+- Added focused component coverage for the new error boundary fallback.
+- Added initial Playwright configuration in `apps/web/playwright.config.ts` and a first CRM shell smoke test in `apps/web/e2e/crm-shell.spec.ts`.
+- Added an isolated Playwright database preparation script in `apps/web/scripts/prepare-e2e.ts` so E2E runs do not mutate the default local workspace database.
+- Expanded Playwright regression coverage to exercise settings save/export, manual sync enqueue, approved send enqueue, and guarded workspace replace restore behavior.
+- Phase 11 started with an initial vertical slice for settings, secrets, backup/restore, and log redaction.
+- Added settings DTOs and validation contracts in `@mycrm/core`.
+- Added recursive log redaction for common secret, token, cookie, and session fields in the shared logger.
+- Added a local file-backed secret store under `.mycrm/secrets.json` and a settings repository on top of the existing `settings` table.
+- Added `/api/settings` and `/api/backup` routes plus web services for listing, updating, exporting, and importing settings snapshots.
+- Added a Phase 11 settings panel to the CRM shell with save, export, and restore actions.
+- Hardened settings import validation to reject duplicate keys and empty secret payloads.
+- Added explicit secret reset controls in the CRM shell so operators can clear stored secrets without deleting the setting key.
+- Added operator-facing guidance in the settings panel and manual test plan for export/import/reset behavior.
+- Added db integration coverage proving merge imports preserve omitted secrets while replace imports clear omitted secrets for both settings-only and workspace restore flows.
+- Added a client-side restore payload preview so operators can review scope, mode, settings count, secret-entry count, and workspace record counts before running a restore.
+- Validation passed: `pnpm --filter @mycrm/core test` and `pnpm --filter @mycrm/web test -- --run app/api/settings/route.test.ts app/api/backup/route.test.ts app/page.test.tsx`.
 - Phase 10 send path completed after the user selected browser-driven sending as the preferred operator flow.
 - Added shared send DTOs, queue-send service wiring, worker `send_message` handling, and guarded browser-send automation seam.
 - Added CRM shell `Queue send` action and dedicated `/api/drafts/[draftId]/send` route with focused route/page coverage.

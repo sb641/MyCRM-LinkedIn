@@ -1,4 +1,5 @@
-import { createDb } from './client';
+import { getEnv } from '@mycrm/core';
+import { createNodeDb } from './server/node-sqlite';
 import {
   auditLog,
   contacts,
@@ -13,7 +14,7 @@ import {
 import { buildSeedData } from './seed-data';
 
 export async function seedDatabase(databaseUrl?: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await createNodeDb(databaseUrl ?? getEnv().DATABASE_URL);
   const seed = buildSeedData();
 
   await db.insert(contacts).values(seed.contacts);
@@ -26,9 +27,18 @@ export async function seedDatabase(databaseUrl?: string) {
   await db.insert(settings).values(seed.settings);
   await db.insert(auditLog).values(seed.auditLog);
 
+  await sqlite.exec('SELECT 1');
+
   await sqlite.close();
 }
 
-if (process.env.NODE_ENV !== 'test') {
+async function main() {
   await seedDatabase();
+}
+
+if (process.argv[1] && import.meta.filename === process.argv[1]) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

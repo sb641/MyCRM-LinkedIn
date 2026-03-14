@@ -7,28 +7,27 @@ import {
   manualSyncRequestSchema,
   syncRunDtoSchema
 } from '@mycrm/core';
-import { createDb, createJobRepository, createSyncRunRepository } from '@mycrm/db';
+import { createJobRepository, createSyncRunRepository, getDb } from '@mycrm/db/server';
 
 export async function listJobs(databaseUrl?: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createJobRepository(db, sqlite);
     const jobs = await repository.listJobs();
     return jobDtoSchema.array().parse(jobs);
   } finally {
-    await sqlite.close();
   }
 }
 
 export async function listJobsWithAudit(databaseUrl?: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createJobRepository(db, sqlite);
     const jobs = await repository.listJobs();
     const jobsWithAudit = await Promise.all(
-      jobs.map(async (job) => ({
+      jobs.map(async (job: Awaited<ReturnType<typeof repository.listJobs>>[number]) => ({
         job,
         auditEntries: await repository.listJobAuditEntries(job.id)
       }))
@@ -36,32 +35,29 @@ export async function listJobsWithAudit(databaseUrl?: string) {
 
     return jobWithAuditSchema.array().parse(jobsWithAudit);
   } finally {
-    await sqlite.close();
   }
 }
 
 export async function enqueueJob(input: unknown, databaseUrl?: string) {
   const parsed = enqueueJobInputSchema.parse(input);
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createJobRepository(db, sqlite);
     const result = await repository.enqueueJob(parsed.type, parsed.payload, parsed.scheduledFor ?? null);
     return enqueueJobResultSchema.parse(result);
   } finally {
-    await sqlite.close();
   }
 }
 
 export async function listSyncRuns(databaseUrl?: string, limit?: number) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await getDb();
 
   try {
     const repository = createSyncRunRepository(db, sqlite);
     const syncRuns = await repository.listSyncRuns(limit);
     return syncRunDtoSchema.array().parse(syncRuns);
   } finally {
-    await sqlite.close();
   }
 }
 

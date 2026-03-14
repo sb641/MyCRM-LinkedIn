@@ -5,6 +5,16 @@ import { usePathname, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import type { ShellDataState } from '@/lib/crm-shell';
 
+const WORKSPACE_REPLACE_CONFIRMATION = 'REPLACE WORKSPACE';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function countArrayEntries(value: unknown) {
+  return Array.isArray(value) ? value.length : 0;
+}
+
 type CrmShellProps = {
   state: ShellDataState;
   flags: {
@@ -29,11 +39,69 @@ export function CrmShell({ state, flags }: CrmShellProps) {
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [settingsValues, setSettingsValues] = useState<Record<string, string>>(
+    Object.fromEntries(state.settings.map((entry) => [entry.key, entry.isSecret ? '' : entry.value]))
+  );
+  const [settingsReset, setSettingsReset] = useState<Record<string, boolean>>(
+    Object.fromEntries(state.settings.map((entry) => [entry.key, false]))
+  );
+  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [backupPayload, setBackupPayload] = useState<string>('');
+  const [restoreConfirmation, setRestoreConfirmation] = useState('');
   const sortOptions = [
     { value: 'recent', label: 'Recent' },
     { value: 'needs-attention', label: 'Needs attention' },
     { value: 'name', label: 'Name' }
   ] as const;
+
+  let restorePreview: {
+    scope: 'settings' | 'workspace';
+    mode: string;
+    settingsCount: number;
+    secretCount: number;
+    workspaceCounts: Array<{ label: string; count: number }>;
+  } | null = null;
+
+  if (backupPayload.trim()) {
+    try {
+      const parsed = JSON.parse(backupPayload) as unknown;
+
+      if (isRecord(parsed)) {
+        const scope = parsed.scope === 'workspace' ? 'workspace' : 'settings';
+        const settingsEntries = Array.isArray(parsed.settings)
+          ? parsed.settings
+          : Array.isArray(parsed.values)
+            ? parsed.values
+            : [];
+        const secretCount = settingsEntries.filter(
+          (entry) => isRecord(entry) && entry.isSecret === true
+        ).length;
+        const workspaceData = isRecord(parsed.data) ? parsed.data : null;
+
+        restorePreview = {
+          scope,
+          mode: typeof parsed.mode === 'string' ? parsed.mode : scope === 'workspace' ? 'replace' : 'merge',
+          settingsCount: settingsEntries.length,
+          secretCount,
+          workspaceCounts: workspaceData
+            ? [
+                { label: 'Contacts', count: countArrayEntries(workspaceData.contacts) },
+                { label: 'Conversations', count: countArrayEntries(workspaceData.conversations) },
+                { label: 'Messages', count: countArrayEntries(workspaceData.messages) },
+                { label: 'Drafts', count: countArrayEntries(workspaceData.drafts) },
+                { label: 'Jobs', count: countArrayEntries(workspaceData.jobs) },
+                { label: 'Sync runs', count: countArrayEntries(workspaceData.syncRuns) },
+                { label: 'Audit log', count: countArrayEntries(workspaceData.auditLog) }
+              ]
+            : []
+        };
+      }
+    } catch {
+      restorePreview = null;
+    }
+  }
 
   async function handleGenerateDraft() {
     if (!state.details) {
@@ -131,6 +199,112 @@ export function CrmShell({ state, flags }: CrmShellProps) {
       setSendError(error instanceof Error ? error.message : 'Unable to queue send');
     } finally {
       setIsQueueingSend(null);
+    }
+  }
+
+  async function handleSaveSettings() {
+    setIsSavingSettings(true);
+    setSettingsMessage(null);
+    setSettingsError(null);
+
+    try {
+      const response = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          values: state.settings.map((entry) => ({
+            key: entry.key,
+            value: settingsValues[entry.key] ?? '',
+            isSecret: entry.isSecret,
+            reset: settingsReset[entry.key] ?? false
+          }))
+        })
+      });
+
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to save settings');
+      }
+
+      setSettingsMessage(`Saved ${body.settings.length} settings`);
+      setSettingsReset(Object.fromEntries(state.settings.map((entry) => [entry.key, false])));
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : 'Unable to save settings');
+    } finally {
+      setIsSavingSettings(false);
+    }
+  }
+
+  async function handleExportBackup() {
+    setSettingsMessage(null);
+    setSettingsError(null);
+
+    try {
+      const response = await fetch('/api/backup?includeSecrets=false');
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to export backup');
+      }
+
+      setBackupPayload(JSON.stringify(body, null, 2));
+      setSettingsMessage('Backup exported without secrets');
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : 'Unable to export backup');
+    }
+  }
+
+  async function handleImportBackup() {
+    setSettingsMessage(null);
+    setSettingsError(null);
+
+    let parsedPayload: unknown;
+
+    try {
+      parsedPayload = JSON.parse(backupPayload);
+    } catch {
+      setSettingsError('Restore payload must be valid JSON');
+      return;
+    }
+
+    const requiresWorkspaceReplaceConfirmation =
+      typeof parsedPayload === 'object' &&
+      parsedPayload !== null &&
+      'scope' in parsedPayload &&
+      'mode' in parsedPayload &&
+      (parsedPayload as { scope?: unknown }).scope === 'workspace' &&
+      (parsedPayload as { mode?: unknown }).mode === 'replace';
+
+    if (
+      requiresWorkspaceReplaceConfirmation &&
+      restoreConfirmation.trim() !== WORKSPACE_REPLACE_CONFIRMATION
+    ) {
+      setSettingsError(`Type ${WORKSPACE_REPLACE_CONFIRMATION} to confirm workspace replace restore`);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/backup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: backupPayload
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to import backup');
+      }
+
+      if (requiresWorkspaceReplaceConfirmation) {
+        setSettingsMessage(`Workspace restored and ${body.settings.length} settings imported`);
+        setRestoreConfirmation('');
+      } else {
+        setSettingsMessage(`Imported ${body.settings.length} settings`);
+      }
+    } catch (error) {
+      setSettingsError(error instanceof Error ? error.message : 'Unable to import backup');
     }
   }
 
@@ -403,6 +577,118 @@ export function CrmShell({ state, flags }: CrmShellProps) {
             <div className="stack-card">
               <p className="eyebrow">CRM model</p>
               <p className="stack-copy">Selection stays URL-driven, while badges, timestamps, priority, and quick actions are derived in a presentation layer so Phase 5 can reuse the same shell.</p>
+            </div>
+
+            <div className="stack-card">
+              <div className="conversation-row">
+                <p className="eyebrow">Settings</p>
+                <span className="subtle-pill">Phase 11</span>
+              </div>
+              <div className="stack-copy" aria-label="Settings operator guidance">
+                Export creates a settings snapshot without secrets. Restore expects a valid snapshot payload. Use Reset secret when a stored token should be cleared on the next save.
+              </div>
+              <div className="settings-list" aria-label="Workspace settings">
+                {state.settings.map((entry) => (
+                  <div key={entry.key} className="draft-goal-field">
+                    <span>{entry.key}</span>
+                    <input
+                      aria-label={entry.key}
+                      type={entry.isSecret ? 'password' : 'text'}
+                      placeholder={entry.redactedValue ?? ''}
+                      value={settingsValues[entry.key] ?? ''}
+                      disabled={Boolean(settingsReset[entry.key])}
+                      onChange={(event) => {
+                        const nextValue = event.target.value;
+                        setSettingsValues((current) => ({
+                          ...current,
+                          [entry.key]: nextValue
+                        }));
+
+                        if (entry.isSecret && nextValue.length > 0) {
+                          setSettingsReset((current) => ({
+                            ...current,
+                            [entry.key]: false
+                          }));
+                        }
+                      }}
+                    />
+                    {entry.isSecret ? (
+                      <div className="quick-action-row">
+                        <button
+                          className="ghost-button"
+                          type="button"
+                          onClick={() => {
+                            setSettingsValues((current) => ({
+                              ...current,
+                              [entry.key]: ''
+                            }));
+                            setSettingsReset((current) => ({
+                              ...current,
+                              [entry.key]: !current[entry.key]
+                            }));
+                          }}
+                        >
+                          {settingsReset[entry.key] ? 'Keep secret' : 'Reset secret'}
+                        </button>
+                        {settingsReset[entry.key] ? <span className="conversation-meta">Secret will be cleared on save</span> : <span className="conversation-meta">Leave blank to keep the stored secret</span>}
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <div className="quick-action-row">
+                <button className="accent-button" type="button" onClick={handleSaveSettings} disabled={isSavingSettings}>
+                  {isSavingSettings ? 'Saving...' : 'Save settings'}
+                </button>
+                <button className="ghost-button" type="button" onClick={handleExportBackup}>
+                  Export backup
+                </button>
+              </div>
+              <label className="draft-goal-field">
+                <span>Restore/import payload</span>
+                <textarea value={backupPayload} onChange={(event) => setBackupPayload(event.target.value)} rows={8} />
+              </label>
+              {restorePreview ? (
+                <div className="stack-card" aria-label="Restore payload preview">
+                  <p className="eyebrow">Restore preview</p>
+                  <p className="stack-copy">
+                    Scope: <strong>{restorePreview.scope}</strong> · Mode: <strong>{restorePreview.mode}</strong> · Settings: <strong>{restorePreview.settingsCount}</strong> · Secret entries: <strong>{restorePreview.secretCount}</strong>
+                  </p>
+                  {restorePreview.workspaceCounts.length > 0 ? (
+                    <dl className="flag-list">
+                      {restorePreview.workspaceCounts.map((entry) => (
+                        <div key={entry.label}>
+                          <dt>{entry.label}</dt>
+                          <dd>{entry.count}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  ) : null}
+                  <p className="stack-copy">
+                    Review scope, mode, and record counts before restore. Replace overwrites current workspace data; merge keeps existing rows and upserts matching ids.
+                  </p>
+                </div>
+              ) : backupPayload.trim() ? (
+                <p className="generated-draft-error">Restore preview unavailable until the payload is valid JSON</p>
+              ) : null}
+              <label className="draft-goal-field">
+                <span>Workspace replace confirmation</span>
+                <input
+                  aria-label="Workspace replace confirmation"
+                  type="text"
+                  placeholder={WORKSPACE_REPLACE_CONFIRMATION}
+                  value={restoreConfirmation}
+                  onChange={(event) => setRestoreConfirmation(event.target.value)}
+                />
+              </label>
+              <p className="stack-copy">
+                Workspace restore with <strong>replace</strong> overwrites contacts, conversations, messages, drafts, jobs, sync runs, audit log, and settings. Type {WORKSPACE_REPLACE_CONFIRMATION} before running that restore mode.
+              </p>
+              <button className="ghost-button" type="button" onClick={handleImportBackup} disabled={!backupPayload.trim()}>
+                Restore backup
+              </button>
+              {settingsMessage ? <p className="generated-draft-preview">{settingsMessage}</p> : null}
+              {settingsError ? <p className="generated-draft-error">{settingsError}</p> : null}
             </div>
 
             <div className="stack-card">

@@ -15,6 +15,9 @@ The test plan is phased and expands with each vertical slice.
 - shell state tests for follow-up urgency, due labels, and follow-up CTA derivation
 - page rendering tests for follow-up reminders in the contact summary
 - smoke tests for app shell and worker bootstrap
+- component test for the global App Router error boundary fallback and retry action
+- Playwright smoke E2E for CRM shell load and core operator panels
+- Playwright regression E2E for settings save/export, manual sync enqueue, approved send enqueue, and workspace replace-restore confirmation guard
 
 ## Manual
 
@@ -35,6 +38,15 @@ The test plan is phased and expands with each vertical slice.
 - enable `ENABLE_REAL_BROWSER_SYNC=true`, queue manual sync from the CRM shell, and verify the active sync state appears without breaking the rest of the workspace
 - verify the shell shows browser-session readiness before queueing sync and surfaces operator guidance when the worker reports missing or stale session failures
 - verify a saved-session manual sync currently lands in retry-needed guidance because Playwright execution is still intentionally stubbed in Phase 9
+- verify the settings panel explains export/import and secret reset behavior before operator actions are taken
+- verify leaving a secret field blank preserves the stored secret, while `Reset secret` clears it on the next save
+- verify exported backup payloads omit secret values by default and imported payloads reject duplicate keys or empty secret values
+- verify pasting a valid restore payload shows a preview with scope, mode, settings count, secret-entry count, and workspace record counts before restore
+- verify a workspace restore payload with `"mode":"replace"` is blocked until the operator types `REPLACE WORKSPACE` into the confirmation field
+- verify a confirmed workspace replace restore shows a destructive-restore warning before execution and a workspace restore success message after import
+- verify merge imports preserve previously stored secrets when the incoming snapshot omits those secret keys
+- verify replace imports clear previously stored secrets when the incoming snapshot omits those secret keys
+- verify an unexpected route render failure lands in the global fallback with retry action instead of a blank crash screen
 
 ## Current validation commands
 

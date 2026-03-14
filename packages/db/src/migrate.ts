@@ -1,14 +1,17 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { createDb } from './client';
+import { createNodeSqliteConnection } from './server/node-sqlite';
 
 export async function runMigrations(databaseUrl?: string) {
-  const { sqlite } = await createDb(databaseUrl);
-  const migrationSql = fs.readFileSync(path.resolve(import.meta.dirname, '../drizzle/0000_phase1.sql'), 'utf8');
-  await sqlite.exec(migrationSql);
+  const sqlite = await createNodeSqliteConnection(databaseUrl);
   await sqlite.close();
 }
 
-if (process.env.NODE_ENV !== 'test') {
+async function main() {
   await runMigrations();
+}
+
+if (process.argv[1] && import.meta.filename === process.argv[1]) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }

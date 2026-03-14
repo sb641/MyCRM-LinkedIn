@@ -182,6 +182,125 @@ export const browserSessionSchema = z.object({
   capturedAt: z.number().int().positive().optional()
 });
 
+export const settingKeySchema = z.enum([
+  'default_account_id',
+  'followup_days',
+  'gemini_model',
+  'enable_ai',
+  'enable_automation',
+  'enable_real_browser_sync',
+  'enable_real_send',
+  'gemini_api_key',
+  'linkedin_session_token'
+]);
+
+export const settingValueSchema = z.object({
+  key: settingKeySchema,
+  value: z.string(),
+  isSecret: z.boolean(),
+  updatedAt: z.number().int().nullable().optional(),
+  redactedValue: z.string().nullable().optional()
+});
+
+export const settingsSnapshotSchema = z.object({
+  values: z.array(settingValueSchema),
+  exportedAt: z.number().int(),
+  version: z.literal(1)
+});
+
+export const workspaceBackupDataSchema = z.object({
+  contacts: z.array(z.record(z.string(), z.unknown())),
+  conversations: z.array(z.record(z.string(), z.unknown())),
+  messages: z.array(z.record(z.string(), z.unknown())),
+  drafts: z.array(z.record(z.string(), z.unknown())),
+  draftVariants: z.array(z.record(z.string(), z.unknown())),
+  jobs: z.array(z.record(z.string(), z.unknown())),
+  syncRuns: z.array(z.record(z.string(), z.unknown())),
+  auditLog: z.array(z.record(z.string(), z.unknown()))
+});
+
+export const workspaceBackupSnapshotSchema = z.object({
+  version: z.literal(1),
+  scope: z.literal('workspace'),
+  exportedAt: z.number().int(),
+  settings: z.array(settingValueSchema),
+  data: workspaceBackupDataSchema
+});
+
+export const updateSettingsInputSchema = z.object({
+  values: z.array(
+    z.object({
+      key: settingKeySchema,
+      value: z.string(),
+      isSecret: z.boolean().optional(),
+      reset: z.boolean().optional().default(false)
+    })
+  ).min(1)
+});
+
+export const backupExportQuerySchema = z.object({
+  includeSecrets: z.boolean().default(false),
+  scope: z.enum(['settings', 'workspace']).default('settings')
+});
+
+export const restoreImportInputSchema = z.object({
+  version: z.literal(1),
+  values: z.array(settingValueSchema.pick({ key: true, value: true, isSecret: true })).min(1),
+  mode: z.enum(['merge', 'replace']).default('merge')
+}).superRefine((input, context) => {
+  const seen = new Set<string>();
+
+  for (const entry of input.values) {
+    if (seen.has(entry.key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate setting key: ${entry.key}`,
+        path: ['values']
+      });
+    }
+
+    seen.add(entry.key);
+
+    if (entry.isSecret && entry.value.trim().length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Secret setting ${entry.key} cannot be empty during import`,
+        path: ['values']
+      });
+    }
+  }
+});
+
+export const restoreWorkspaceInputSchema = z.object({
+  version: z.literal(1),
+  scope: z.literal('workspace'),
+  mode: z.enum(['merge', 'replace']).default('replace'),
+  settings: z.array(settingValueSchema.pick({ key: true, value: true, isSecret: true })).min(1),
+  data: workspaceBackupDataSchema
+}).superRefine((input, context) => {
+  const seen = new Set<string>();
+
+  for (const entry of input.settings) {
+    if (seen.has(entry.key)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate setting key: ${entry.key}`,
+        path: ['settings']
+      });
+    }
+
+    seen.add(entry.key);
+
+    if (entry.isSecret && entry.value.trim().length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Secret setting ${entry.key} cannot be empty during import`,
+        path: ['settings']
+      });
+    }
+  }
+});
+
 export const importThreadsResultSchema = z.object({
   provider: z.string().min(1),
   accountId: z.string().min(1),
@@ -224,3 +343,12 @@ export type BrowserSessionInput = z.infer<typeof browserSessionSchema>;
 export type QueueSendRequest = z.infer<typeof queueSendRequestSchema>;
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>;
 export type SendMessageResultDto = z.infer<typeof sendMessageResultSchema>;
+export type SettingKey = z.infer<typeof settingKeySchema>;
+export type SettingValueDto = z.infer<typeof settingValueSchema>;
+export type SettingsSnapshotDto = z.infer<typeof settingsSnapshotSchema>;
+export type WorkspaceBackupDataDto = z.infer<typeof workspaceBackupDataSchema>;
+export type WorkspaceBackupSnapshotDto = z.infer<typeof workspaceBackupSnapshotSchema>;
+export type UpdateSettingsInput = z.infer<typeof updateSettingsInputSchema>;
+export type BackupExportQuery = z.infer<typeof backupExportQuerySchema>;
+export type RestoreImportInput = z.infer<typeof restoreImportInputSchema>;
+export type RestoreWorkspaceInput = z.infer<typeof restoreWorkspaceInputSchema>;

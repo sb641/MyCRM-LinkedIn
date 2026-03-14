@@ -1,7 +1,11 @@
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 import { getFeatureFlags } from '@mycrm/core';
 import { listInboxItems, getContactConversationDetails } from '@/lib/services/inbox-service';
 import { getBrowserSession } from '@/lib/services/browser-session-service';
 import { listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
+import { listSettings } from '@/lib/services/settings-service';
 import { buildShellDataState, getShellRouteState } from '@/lib/crm-shell';
 import { CrmShell } from './crm-shell';
 
@@ -13,38 +17,51 @@ export default async function HomePage({ searchParams }: HomePageProps) {
   const flags = safeGetFeatureFlags();
   const resolvedSearchParams = await searchParams;
 
+  const inboxResult = await safeLoad(() => listInboxItems());
+  const inbox = inboxResult.data ?? [];
+  const route = getShellRouteState(resolvedSearchParams, inbox);
+  const detailsResult = route.selectedContactId
+    ? await safeLoad(() => getContactConversationDetails(route.selectedContactId as string))
+    : { data: null, error: null };
+  const syncRunsResult = await safeLoad(() => listSyncRuns(undefined, 5));
+  const jobsResult = await safeLoad(() => listImportThreadJobs());
+  const browserSessionResult = await safeLoad(() => getBrowserSession('local-account'));
+  const settingsResult = await safeLoad(() => listSettings());
+
+  const errorMessage = [
+    inboxResult.error,
+    detailsResult.error,
+    syncRunsResult.error,
+    jobsResult.error,
+    browserSessionResult.error,
+    settingsResult.error
+  ].find((value) => value !== null) ?? null;
+
+  const state = buildShellDataState({
+    inbox,
+    route,
+    details: detailsResult.data ?? null,
+    syncRuns: syncRunsResult.data ?? [],
+    jobs: jobsResult.data ?? [],
+    browserSession: browserSessionResult.data ?? null,
+    settings: settingsResult.data ?? [],
+    errorMessage
+  });
+
+  return <CrmShell state={state} flags={flags} />;
+}
+
+async function safeLoad<T>(loader: () => Promise<T>) {
   try {
-    const inbox = await listInboxItems();
-    const route = getShellRouteState(resolvedSearchParams, inbox);
-    const details = route.selectedContactId
-      ? await getContactConversationDetails(route.selectedContactId)
-      : null;
-    const syncRuns = await listSyncRuns(undefined, 5);
-    const jobs = await listImportThreadJobs();
-    const browserSession = await getBrowserSession('local-account');
-
-    const state = buildShellDataState({
-      inbox,
-      route,
-      details,
-      syncRuns,
-      jobs,
-      browserSession
-    });
-
-    return <CrmShell state={state} flags={flags} />;
+    return {
+      data: await loader(),
+      error: null
+    };
   } catch (error) {
-    const state = buildShellDataState({
-      inbox: [],
-      route: { selectedContactId: null, selectedConversationId: null, sort: 'recent' },
-      details: null,
-      syncRuns: [],
-      jobs: [],
-      browserSession: null,
-      errorMessage: error instanceof Error ? error.message : 'Unknown workspace error'
-    });
-
-    return <CrmShell state={state} flags={flags} />;
+    return {
+      data: null,
+      error: error instanceof Error ? error.message : 'Unknown workspace error'
+    };
   }
 }
 

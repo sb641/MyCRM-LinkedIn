@@ -1,0 +1,91 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "db-typecheck",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@mycrm/db",
+				"typecheck"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "web-typecheck",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@mycrm/web",
+				"typecheck"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "web-e2e-run",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"test:e2e:run"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "prepare-e2e-node-loader",
+			"type": "shell",
+			"command": "node",
+			"args": [
+				"--import",
+				"tsx",
+				"./apps/web/scripts/prepare-e2e.ts"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "web-e2e-filtered",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@mycrm/web",
+				"test:e2e"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "web-e2e-filtered-rerun",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@mycrm/web",
+				"test:e2e"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "kill-3417-owner",
+			"type": "shell",
+			"command": "taskkill",
+			"args": [
+				"/PID",
+				"23500",
+				"/F"
+			],
+			"isBackground": false
+		},
+		{
+			"label": "web-e2e-after-kill",
+			"type": "shell",
+			"command": "pnpm",
+			"args": [
+				"--filter",
+				"@mycrm/web",
+				"test:e2e"
+			],
+			"isBackground": false
+		}
+	]
+}
