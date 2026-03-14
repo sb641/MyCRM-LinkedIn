@@ -3,18 +3,18 @@
   "private": true,
   "packageManager": "pnpm@10.6.3",
   "scripts": {
-    "dev": "pnpm --filter @mycrm/web dev",
+    "build": "pnpm -r build",
+    "db:generate": "pnpm --filter @mycrm/db db:generate",
+    "db:migrate": "pnpm --filter @mycrm/db db:migrate",
+    "db:seed": "pnpm --filter @mycrm/db db:seed",
+    "dev": "pnpm -r --parallel --stream dev",
     "dev:web": "pnpm --filter @mycrm/web dev",
     "dev:worker": "pnpm --filter @mycrm/worker dev",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "test:integration": "pnpm -r test:integration",
-    "test:e2e": "pnpm --filter @mycrm/web test:e2e",
-    "build": "pnpm -r build",
-    "db:generate": "pnpm --filter @mycrm/db db:generate",
-    "db:migrate": "pnpm --filter @mycrm/db db:migrate",
-    "db:seed": "pnpm --filter @mycrm/db db:seed"
+    "test:e2e": "pnpm --filter @mycrm/web test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
