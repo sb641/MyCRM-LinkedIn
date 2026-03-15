@@ -53,39 +53,6 @@
 				"test:e2e"
 			],
 			"isBackground": false
-		},
-		{
-			"label": "web-e2e-filtered-rerun",
-			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@mycrm/web",
-				"test:e2e"
-			],
-			"isBackground": false
-		},
-		{
-			"label": "kill-3417-owner",
-			"type": "shell",
-			"command": "taskkill",
-			"args": [
-				"/PID",
-				"23500",
-				"/F"
-			],
-			"isBackground": false
-		},
-		{
-			"label": "web-e2e-after-kill",
-			"type": "shell",
-			"command": "pnpm",
-			"args": [
-				"--filter",
-				"@mycrm/web",
-				"test:e2e"
-			],
-			"isBackground": false
 		}
 	]
 }
