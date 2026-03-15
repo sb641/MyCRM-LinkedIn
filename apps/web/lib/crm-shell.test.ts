@@ -10,6 +10,7 @@ import {
   getShellRouteState
 } from './crm-shell';
 import { buildInboxWorkspaceViewModel } from './view-models/inbox';
+import { buildDraftReviewViewModel } from './view-models/drafts';
 
 const inboxItem: InboxItemDto = {
   contactId: 'contact-001',
@@ -218,6 +219,47 @@ describe('crm shell state', () => {
     expect(workspace.visibleItems).toHaveLength(2);
     expect(workspace.queueTabs.find((tab) => tab.key === 'needs-reply')?.count).toBe(1);
     expect(workspace.filterChips.some((chip) => chip.label === 'Outreach')).toBe(true);
+  });
+
+  it('builds draft review tabs and groups from shell state', () => {
+    const state = buildShellDataState({
+      inbox: [
+        {
+          ...inboxItem,
+          draftStatus: 'generated',
+          sendStatus: 'idle'
+        }
+      ],
+      route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
+      details: {
+        ...details,
+        drafts: [
+          {
+            id: 'draft-001',
+            goalText: 'Follow up',
+            approvedText: null,
+            draftStatus: 'generated',
+            sendStatus: 'idle',
+            modelName: 'mock-gemini',
+            approvedAt: null,
+            sentAt: null,
+            createdAt: Date.now()
+          }
+        ]
+      }
+    });
+
+    const workspace = buildDraftReviewViewModel(state, {
+      tab: 'needs-review',
+      groupBy: 'status',
+      account: null,
+      role: null,
+      generatedToday: 'true'
+    });
+
+    expect(workspace.activeTab).toBe('needs-review');
+    expect(workspace.tabs.find((tab) => tab.key === 'needs-review')?.count).toBe(1);
+    expect(workspace.groups[0]?.items[0]?.draftId).toBe('draft-001');
   });
 
   it('builds an active sync job view model for queued import jobs', () => {

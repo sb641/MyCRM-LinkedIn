@@ -154,6 +154,36 @@ body {
   line-height: 1.6;
 }
 
+.drafts-review-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.drafts-toolbar-panel,
+.draft-review-group,
+.draft-review-row {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 18px 40px rgba(31, 26, 23, 0.08);
+}
+
+.draft-review-groups,
+.draft-review-list {
+  display: grid;
+  gap: 18px;
+}
+
+.draft-review-row {
+  padding: 20px;
+}
+
+.draft-actions-block {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
 body::before {
   content: '';
   position: fixed;
