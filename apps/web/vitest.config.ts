@@ -19,10 +19,12 @@ export default defineConfig({
     }
   },
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, '.'),
-      '@mycrm/core': path.resolve(__dirname, '../../packages/core/src/index.ts'),
-      '@mycrm/db': path.resolve(__dirname, '../../packages/db/src/index.ts')
-    }
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, '.') },
+      { find: '@mycrm/core', replacement: path.resolve(__dirname, '../../packages/core/src/index.ts') },
+      { find: /^@mycrm\/db\/server$/, replacement: path.resolve(__dirname, '../../packages/db/src/server/index.ts') },
+      { find: '@mycrm/db', replacement: path.resolve(__dirname, '../../packages/db/src/index.ts') },
+      { find: /^server-only$/, replacement: path.resolve(__dirname, './test/server-only.ts') }
+    ]
   }
 });
