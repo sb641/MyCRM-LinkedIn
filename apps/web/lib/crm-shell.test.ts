@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ContactConversationDetailsDto, InboxItemDto, JobWithAuditDto } from '@mycrm/core';
 import {
+  buildAccountDetailsViewModel,
+  buildAccountSummaryItems,
   buildActiveSyncJobViewModel,
   buildBrowserSessionViewModel,
   buildConversationDetailsViewModel,
@@ -85,6 +87,7 @@ describe('crm shell state', () => {
   it('returns empty view when inbox is empty', () => {
     const state = buildShellDataState({
       inbox: [],
+      accounts: [],
       route: { selectedContactId: null, selectedConversationId: null, sort: 'recent' },
       details: null
     });
@@ -95,6 +98,7 @@ describe('crm shell state', () => {
   it('returns error view when an error message is present', () => {
     const state = buildShellDataState({
       inbox: [inboxItem],
+      accounts: [],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details,
       errorMessage: 'Inbox failed'
@@ -205,6 +209,18 @@ describe('crm shell state', () => {
           draftStatus: 'approved'
         }
       ],
+      accounts: [
+        {
+          id: 'account-001',
+          name: 'Company 1',
+          domain: 'company.test',
+          notes: null,
+          contactCount: 2,
+          aliasCount: 1,
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details
     });
@@ -217,8 +233,56 @@ describe('crm shell state', () => {
     expect(workspace.activeQueue).toBe('drafts');
     expect(workspace.entityMode).toBe('accounts');
     expect(workspace.visibleItems).toHaveLength(2);
+    expect(workspace.visibleAccounts).toHaveLength(1);
     expect(workspace.queueTabs.find((tab) => tab.key === 'needs-reply')?.count).toBe(1);
     expect(workspace.filterChips.some((chip) => chip.label === 'Outreach')).toBe(true);
+  });
+
+  it('builds account summary and detail view models', () => {
+    const summaries = buildAccountSummaryItems([
+      {
+        id: 'account-001',
+        name: 'Acme Corp',
+        domain: 'acme.test',
+        notes: 'Priority target',
+        contactCount: 2,
+        aliasCount: 1,
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ]);
+
+    const detailsView = buildAccountDetailsViewModel({
+      account: {
+        ...summaries[0],
+        aliases: [
+          {
+            id: 'alias-001',
+            accountId: 'account-001',
+            alias: 'Acme Incorporated',
+            source: 'manual',
+            createdAt: 1
+          }
+        ]
+      },
+      contacts: [
+        {
+          id: 'contact-001',
+          name: 'Contact 1',
+          company: 'Acme Corp',
+          position: 'Founder',
+          headline: 'Founder',
+          seniorityBucket: 'executive',
+          buyingRole: 'decision_maker',
+          relationshipStatus: 'awaiting_reply',
+          lastInteractionAt: 1
+        }
+      ]
+    });
+
+    expect(summaries[0]?.relationshipLabel).toBe('2 stakeholders');
+    expect(detailsView.account.primaryAlias).toBe('Acme Incorporated');
+    expect(detailsView.contacts[0]?.relationshipLabel).toBe('awaiting reply');
   });
 
   it('builds draft review tabs and groups from shell state', () => {
@@ -230,6 +294,7 @@ describe('crm shell state', () => {
           sendStatus: 'idle'
         }
       ],
+      accounts: [],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details: {
         ...details,
@@ -305,6 +370,7 @@ describe('crm shell state', () => {
   it('includes active sync job state in the shell data model', () => {
     const state = buildShellDataState({
       inbox: [inboxItem],
+      accounts: [],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details,
       jobs: [
@@ -351,6 +417,7 @@ describe('crm shell state', () => {
   it('includes browser session state in the shell data model', () => {
     const state = buildShellDataState({
       inbox: [inboxItem],
+      accounts: [],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details,
       syncRuns: [
@@ -382,6 +449,7 @@ describe('crm shell state', () => {
   it('falls back to a generic operator sync message for unknown failures', () => {
     const state = buildShellDataState({
       inbox: [inboxItem],
+      accounts: [],
       route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
       details,
       jobs: [

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
+import type { FeatureFlags } from '@mycrm/core';
 import type { ShellDataState } from '@/lib/crm-shell';
 import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
 import type { InboxWorkspaceViewModel } from '@/lib/view-models/inbox';
@@ -12,12 +13,7 @@ const WORKSPACE_REPLACE_CONFIRMATION = 'REPLACE WORKSPACE';
 type InboxWorkspaceProps = {
   state: ShellDataState;
   workspace: InboxWorkspaceViewModel;
-  flags: {
-    ENABLE_AI: boolean;
-    ENABLE_AUTOMATION: boolean;
-    ENABLE_REAL_BROWSER_SYNC: boolean;
-    ENABLE_REAL_SEND: boolean;
-  };
+  flags: FeatureFlags;
 };
 
 export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps) {
@@ -52,11 +48,38 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [backupPayload, setBackupPayload] = useState('');
   const [restoreConfirmation, setRestoreConfirmation] = useState('');
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newAccountDomain, setNewAccountDomain] = useState('');
+  const [newAccountNotes, setNewAccountNotes] = useState('');
+  const [isCreatingAccount, setIsCreatingAccount] = useState(false);
+  const [accountActionMessage, setAccountActionMessage] = useState<string | null>(null);
+  const [accountActionError, setAccountActionError] = useState<string | null>(null);
+  const [selectedAccountContactIds, setSelectedAccountContactIds] = useState<string[]>([]);
+  const [mergeSourceAccountId, setMergeSourceAccountId] = useState('');
+  const [isAssigningContacts, setIsAssigningContacts] = useState(false);
+  const [isMergingAccounts, setIsMergingAccounts] = useState(false);
 
   const restorePreview = getRestorePreview(backupPayload);
+  const isAccountsMode = workspace.entityMode === 'accounts';
+  const selectedAccountId = workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id ?? null;
+  const assignableContacts = state.inbox.filter((item) => item.accountId !== selectedAccountId);
+  const mergeCandidates = workspace.visibleAccounts.filter((account) => account.id !== selectedAccountId);
+
+  function refreshWorkspace(nextAccountId?: string | null) {
+    const query = buildQuery(searchParams, {
+      entity: workspace.entityMode,
+      queue: workspace.activeQueue,
+      sort: state.sort,
+      accountId: nextAccountId ?? selectedAccountId,
+      contactId: workspace.selectedItem?.contactId ?? state.selectedItem?.contactId,
+      conversationId: workspace.selectedItem?.conversationId ?? state.selectedItem?.conversationId
+    });
+
+    window.location.assign(`${pathname}?${query.toString()}`);
+  }
 
   async function handleGenerateDraft() {
-    if (!workspace.details) {
+    if (!workspace.details || isAccountsMode) {
       return;
     }
 
@@ -283,6 +306,122 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     }
   }
 
+  function toggleAccountContactSelection(contactId: string) {
+    setSelectedAccountContactIds((current) =>
+      current.includes(contactId) ? current.filter((item) => item !== contactId) : [...current, contactId]
+    );
+  }
+
+  async function handleCreateAccount() {
+    const name = newAccountName.trim();
+    if (!name) {
+      setAccountActionError('Account name is required');
+      setAccountActionMessage(null);
+      return;
+    }
+
+    setAccountActionError(null);
+    setAccountActionMessage(null);
+    setIsCreatingAccount(true);
+
+    try {
+      const response = await fetch('/api/accounts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name,
+          domain: newAccountDomain.trim() || undefined,
+          notes: newAccountNotes.trim() || undefined
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to create account');
+      }
+
+      setAccountActionMessage(`Created account ${body.account.name}`);
+      setNewAccountName('');
+      setNewAccountDomain('');
+      setNewAccountNotes('');
+      refreshWorkspace(body.account.id);
+    } catch (error) {
+      setAccountActionError(error instanceof Error ? error.message : 'Unable to create account');
+    } finally {
+      setIsCreatingAccount(false);
+    }
+  }
+
+  async function handleAssignContacts() {
+    if (!selectedAccountId || selectedAccountContactIds.length === 0) {
+      return;
+    }
+
+    setAccountActionError(null);
+    setAccountActionMessage(null);
+    setIsAssigningContacts(true);
+
+    try {
+      const response = await fetch(`/api/accounts/${encodeURIComponent(selectedAccountId)}/contacts`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          contactIds: selectedAccountContactIds
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to assign contacts');
+      }
+
+      setAccountActionMessage(`Assigned ${body.contacts.length} stakeholders to ${body.account.name}`);
+      setSelectedAccountContactIds([]);
+      refreshWorkspace(selectedAccountId);
+    } catch (error) {
+      setAccountActionError(error instanceof Error ? error.message : 'Unable to assign contacts');
+    } finally {
+      setIsAssigningContacts(false);
+    }
+  }
+
+  async function handleMergeAccounts() {
+    if (!selectedAccountId || !mergeSourceAccountId) {
+      return;
+    }
+
+    setAccountActionError(null);
+    setAccountActionMessage(null);
+    setIsMergingAccounts(true);
+
+    try {
+      const response = await fetch('/api/accounts/merge', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          sourceAccountId: mergeSourceAccountId,
+          targetAccountId: selectedAccountId
+        })
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to merge accounts');
+      }
+
+      setAccountActionMessage(`Merged ${mergeSourceAccountId} into ${body.account.name}`);
+      setMergeSourceAccountId('');
+      refreshWorkspace(selectedAccountId);
+    } catch (error) {
+      setAccountActionError(error instanceof Error ? error.message : 'Unable to merge accounts');
+    } finally {
+      setIsMergingAccounts(false);
+    }
+  }
+
   return (
     <main className="crm-page">
       <div className="crm-backdrop" />
@@ -302,11 +441,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               className="ghost-button"
               type="button"
               onClick={() => setIsBulkModalOpen(true)}
-              disabled={selectedPeople.length === 0}
+              disabled={selectedPeople.length === 0 || isAccountsMode}
             >
-              {selectedPeople.length > 0 ? `Bulk Generate (${selectedPeople.length})` : 'Bulk Generate'}
+              {selectedPeople.length > 0 && !isAccountsMode ? `Bulk Generate (${selectedPeople.length})` : 'Bulk Generate'}
             </button>
-            <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!workspace.details || isGenerating}>
+            <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!workspace.details || isGenerating || isAccountsMode}>
               {isGenerating ? 'Generating draft...' : 'Generate Draft'}
             </button>
           </div>
@@ -381,9 +520,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                 <h2 className="panel-title">{workspace.entityMode === 'people' ? 'People' : 'Accounts'}</h2>
               </div>
               <div className="panel-header-actions">
-                <span className="subtle-pill">Visible {workspace.summary.visibleConversations}</span>
-                <span className="count-pill">{workspace.summary.totalConversations}</span>
-                {selectedPeople.length > 0 ? (
+                <span className="subtle-pill">Visible {isAccountsMode ? workspace.summary.visibleAccounts : workspace.summary.visibleConversations}</span>
+                <span className="count-pill">{isAccountsMode ? workspace.summary.totalAccounts : workspace.summary.totalConversations}</span>
+                {selectedPeople.length > 0 && !isAccountsMode ? (
                   <button className="ghost-button" type="button" onClick={clearConversationSelection}>
                     Clear selection
                   </button>
@@ -393,6 +532,48 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
             {state.view === 'empty' ? (
               <EmptyState title="Inbox is empty" body="Run a sync or seed more fixtures to populate the queue." />
+            ) : isAccountsMode ? (
+              workspace.visibleAccounts.length === 0 ? (
+                <EmptyState title="No accounts in this queue" body="Create an account or assign contacts to start grouping stakeholders." />
+              ) : (
+                <nav className="conversation-list" aria-label="Account list">
+                  {workspace.visibleAccounts.map((account) => {
+                    const isActive = workspace.selectedAccount?.id === account.id;
+
+                    return (
+                      <Link
+                        key={account.id}
+                        href={{
+                          pathname,
+                          query: buildQuery(searchParams, {
+                            accountId: account.id,
+                            queue: workspace.activeQueue,
+                            entity: workspace.entityMode,
+                            sort: state.sort
+                          })
+                        }}
+                        className={isActive ? 'conversation-card active' : 'conversation-card'}
+                      >
+                        <div className="conversation-row conversation-row-selectable">
+                          <strong>{account.name}</strong>
+                          <span className="subtle-pill">{account.relativeUpdatedAt}</span>
+                        </div>
+                        <p className="conversation-meta">
+                          {account.domain ?? 'No domain'} · {account.relationshipLabel}
+                        </p>
+                        <p className="conversation-preview">{account.notes?.trim() || 'No account notes yet'}</p>
+                        <div className="chip-row" aria-label="Account badges">
+                          {account.badges.map((badge) => (
+                            <span key={`${account.id}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
+                              {badge.label}
+                            </span>
+                          ))}
+                        </div>
+                      </Link>
+                    );
+                  })}
+                </nav>
+              )
             ) : workspace.visibleItems.length === 0 ? (
               <EmptyState title="No conversations in this queue" body="Switch queue tabs or sync more data to continue." />
             ) : (
@@ -447,13 +628,198 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
             <div className="panel-header">
               <div>
                 <p className="eyebrow">Workspace</p>
-                <h2 className="panel-title">Conversation and drafts</h2>
+                <h2 className="panel-title">{isAccountsMode ? 'Account workspace' : 'Conversation and drafts'}</h2>
               </div>
-              <span className="subtle-pill">Queue-first</span>
+              <span className="subtle-pill">{isAccountsMode ? 'ABM grouping' : 'Queue-first'}</span>
             </div>
 
             {state.view === 'error' ? (
               <ErrorState message={state.errorMessage ?? 'Unknown error'} />
+            ) : isAccountsMode ? (
+              !workspace.accountDetails ? (
+                <EmptyState title="No account selected" body="Choose an account to review aliases and stakeholders." />
+              ) : (
+                <div className="timeline-layout inbox-main-layout">
+                  <section className="contact-summary">
+                    <div className="conversation-row">
+                      <div>
+                        <h3>{workspace.accountDetails.account.name}</h3>
+                        <p>
+                          {workspace.accountDetails.account.domain ?? 'No domain'} · {workspace.accountDetails.account.relationshipLabel}
+                        </p>
+                      </div>
+                      <span className="subtle-pill">Updated {workspace.accountDetails.account.relativeUpdatedAt}</span>
+                    </div>
+                    <div className="summary-chips" aria-label="Account badges">
+                      {workspace.accountDetails.account.badges.map((badge) => (
+                        <span key={badge.label} className={`status-chip tone-${badge.tone}`}>
+                          {badge.label}
+                        </span>
+                      ))}
+                    </div>
+                    <dl className="contact-facts">
+                      <div>
+                        <dt>Stakeholders</dt>
+                        <dd>{workspace.accountDetails.contacts.length}</dd>
+                      </div>
+                      <div>
+                        <dt>Aliases</dt>
+                        <dd>{workspace.accountDetails.account.aliases.length}</dd>
+                      </div>
+                      <div>
+                        <dt>Primary alias</dt>
+                        <dd>{workspace.accountDetails.account.primaryAlias ?? 'None'}</dd>
+                      </div>
+                      <div>
+                        <dt>Domain</dt>
+                        <dd>{workspace.accountDetails.account.domain ?? 'Unknown'}</dd>
+                      </div>
+                    </dl>
+                    {workspace.accountDetails.account.notes ? (
+                      <div className="followup-callout urgency-none">
+                        <strong>Notes</strong>
+                        <p>{workspace.accountDetails.account.notes}</p>
+                      </div>
+                    ) : null}
+                  </section>
+
+                  <div className="inbox-content-columns">
+                    <section className="message-stack" aria-label="Stakeholders">
+                      <div className="conversation-row">
+                        <h3>Stakeholders</h3>
+                        <span className="subtle-pill">{workspace.accountDetails.contacts.length}</span>
+                      </div>
+                      {workspace.accountDetails.contacts.length === 0 ? (
+                        <EmptyState title="No stakeholders assigned" body="Assign contacts to this account to build the ABM workspace." />
+                      ) : (
+                        workspace.accountDetails.contacts.map((contact) => (
+                          <article key={contact.id} className="message-card inbound">
+                            <div className="conversation-row">
+                              <strong>{contact.name}</strong>
+                              <span className="subtle-pill">{contact.relativeLastInteraction}</span>
+                            </div>
+                            <p className="message-meta">
+                              {contact.company ?? 'Independent'} · {contact.position ?? contact.headline ?? 'No role yet'}
+                            </p>
+                            <div className="chip-row" aria-label="Stakeholder badges">
+                              <span className="status-chip tone-info">{contact.relationshipLabel}</span>
+                              {contact.seniorityBucket ? <span className="status-chip tone-neutral">{contact.seniorityBucket}</span> : null}
+                              {contact.buyingRole ? <span className="status-chip tone-neutral">{contact.buyingRole}</span> : null}
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </section>
+
+                    <section className="draft-stack" aria-label="Account aliases">
+                      <div className="conversation-row">
+                        <h3>Aliases</h3>
+                        <span className="subtle-pill">{workspace.accountDetails.account.aliases.length}</span>
+                      </div>
+                      {workspace.accountDetails.account.aliases.length === 0 ? (
+                        <EmptyState title="No aliases yet" body="Merged or imported names will appear here for operator review." />
+                      ) : (
+                        workspace.accountDetails.account.aliases.map((alias) => (
+                          <article key={alias.id} className="draft-card">
+                            <div className="conversation-row">
+                              <strong>{alias.alias}</strong>
+                              <span className="subtle-pill">{alias.source}</span>
+                            </div>
+                          </article>
+                        ))
+                      )}
+                    </section>
+                  </div>
+
+                  <div className="inbox-content-columns">
+                    <section className="draft-stack" aria-label="Create account">
+                      <div className="conversation-row">
+                        <h3>Create account</h3>
+                        <span className="subtle-pill">Manual</span>
+                      </div>
+                      <label className="draft-goal-field">
+                        <span>Account name</span>
+                        <input value={newAccountName} onChange={(event) => setNewAccountName(event.target.value)} />
+                      </label>
+                      <label className="draft-goal-field">
+                        <span>Domain</span>
+                        <input value={newAccountDomain} onChange={(event) => setNewAccountDomain(event.target.value)} />
+                      </label>
+                      <label className="draft-goal-field">
+                        <span>Notes</span>
+                        <textarea value={newAccountNotes} onChange={(event) => setNewAccountNotes(event.target.value)} rows={3} />
+                      </label>
+                      <button className="accent-button" type="button" onClick={handleCreateAccount} disabled={isCreatingAccount}>
+                        {isCreatingAccount ? 'Creating account...' : 'Create account'}
+                      </button>
+                    </section>
+
+                    <section className="draft-stack" aria-label="Assign stakeholders">
+                      <div className="conversation-row">
+                        <h3>Assign stakeholders</h3>
+                        <span className="subtle-pill">{selectedAccountContactIds.length} selected</span>
+                      </div>
+                      {assignableContacts.length === 0 ? (
+                        <EmptyState title="No unassigned stakeholders" body="All visible contacts already belong to this account." />
+                      ) : (
+                        <div className="sync-run-list" aria-label="Assignable stakeholders">
+                          {assignableContacts.map((contact) => (
+                            <label key={contact.contactId} className="conversation-card conversation-row-selectable">
+                              <input
+                                type="checkbox"
+                                checked={selectedAccountContactIds.includes(contact.contactId)}
+                                onChange={() => toggleAccountContactSelection(contact.contactId)}
+                                aria-label={`Assign ${contact.contactName}`}
+                              />
+                              <div>
+                                <strong>{contact.contactName}</strong>
+                                <p className="conversation-meta">{contact.company ?? 'Independent'} · {contact.headline ?? 'No role yet'}</p>
+                              </div>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        className="accent-button"
+                        type="button"
+                        onClick={handleAssignContacts}
+                        disabled={!selectedAccountId || selectedAccountContactIds.length === 0 || isAssigningContacts}
+                      >
+                        {isAssigningContacts ? 'Assigning...' : 'Assign selected'}
+                      </button>
+                    </section>
+                  </div>
+
+                  <section className="draft-stack" aria-label="Merge accounts">
+                    <div className="conversation-row">
+                      <h3>Merge accounts</h3>
+                      <span className="subtle-pill">Preserve aliases</span>
+                    </div>
+                    <label className="draft-goal-field">
+                      <span>Source account</span>
+                      <select value={mergeSourceAccountId} onChange={(event) => setMergeSourceAccountId(event.target.value)}>
+                        <option value="">Select account</option>
+                        {mergeCandidates.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      className="ghost-button"
+                      type="button"
+                      onClick={handleMergeAccounts}
+                      disabled={!selectedAccountId || !mergeSourceAccountId || isMergingAccounts}
+                    >
+                      {isMergingAccounts ? 'Merging...' : 'Merge into current account'}
+                    </button>
+                  </section>
+
+                  {accountActionMessage ? <p className="generated-draft-preview">{accountActionMessage}</p> : null}
+                  {accountActionError ? <p className="generated-draft-error">{accountActionError}</p> : null}
+                </div>
+              )
             ) : !workspace.details ? (
               <EmptyState title="No conversation selected" body="Choose a queue item to open the conversation workspace." />
             ) : (

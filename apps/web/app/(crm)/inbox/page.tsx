@@ -2,6 +2,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 import { getFeatureFlags } from '@mycrm/core';
+import { getAccountDetails, listAccounts } from '@/lib/services/accounts-service';
 import { listInboxItems, getContactConversationDetails } from '@/lib/services/inbox-service';
 import { getBrowserSession } from '@/lib/services/browser-session-service';
 import { listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
@@ -21,9 +22,16 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
   const inboxResult = await safeLoad(() => listInboxItems());
   const inbox = inboxResult.data ?? [];
   const route = getShellRouteState(resolvedSearchParams, inbox);
+  const entity = getSingleValue(resolvedSearchParams.entity);
+  const accountsResult = await safeLoad(() => listAccounts());
+  const selectedAccountId = getSingleValue(resolvedSearchParams.accountId) ?? accountsResult.data?.[0]?.id ?? null;
   const detailsResult = route.selectedContactId
     ? await safeLoad(() => getContactConversationDetails(route.selectedContactId as string))
     : { data: null, error: null };
+  const accountDetailsResult =
+    entity === 'accounts' && selectedAccountId
+      ? await safeLoad(() => getAccountDetails(selectedAccountId))
+      : { data: null, error: null };
   const syncRunsResult = await safeLoad(() => listSyncRuns(undefined, 5));
   const jobsResult = await safeLoad(() => listImportThreadJobs());
   const browserSessionResult = await safeLoad(() => getBrowserSession('local-account'));
@@ -31,7 +39,9 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
 
   const errorMessage = [
     inboxResult.error,
+    accountsResult.error,
     detailsResult.error,
+    accountDetailsResult.error,
     syncRunsResult.error,
     jobsResult.error,
     browserSessionResult.error,
@@ -40,8 +50,10 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
 
   const state = buildShellDataState({
     inbox,
+    accounts: accountsResult.data ?? [],
     route,
     details: detailsResult.data ?? null,
+    accountDetails: accountDetailsResult.data ?? null,
     syncRuns: syncRunsResult.data ?? [],
     jobs: jobsResult.data ?? [],
     browserSession: browserSessionResult.data ?? null,
@@ -51,7 +63,7 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
 
   const workspace = buildInboxWorkspaceViewModel(state, {
     queue: getSingleValue(resolvedSearchParams.queue),
-    entity: getSingleValue(resolvedSearchParams.entity)
+    entity
   });
 
   return <InboxWorkspace state={state} workspace={workspace} flags={flags} />;

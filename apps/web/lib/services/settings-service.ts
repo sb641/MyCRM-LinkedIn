@@ -7,10 +7,18 @@ import {
   updateSettingsInputSchema,
   ValidationError
 } from '@mycrm/core';
-import { createSettingsRepository, getDb } from '@mycrm/db/server';
+import { createNodeDb, createSettingsRepository, getDb } from '@mycrm/db/server';
+
+async function getServiceDb(databaseUrl?: string) {
+  if (databaseUrl) {
+    return createNodeDb(databaseUrl);
+  }
+
+  return getDb();
+}
 
 export async function listSettings(databaseUrl?: string) {
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
 
   try {
     const repository = createSettingsRepository(db, sqlite);
@@ -25,7 +33,7 @@ export async function updateSettings(input: unknown, databaseUrl?: string) {
     throw new ValidationError('Invalid settings payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
 
   try {
     const repository = createSettingsRepository(db, sqlite);
@@ -49,7 +57,7 @@ export async function exportSettings(input: unknown, databaseUrl?: string) {
     throw new ValidationError('Invalid export query', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
 
   try {
     const repository = createSettingsRepository(db, sqlite);
@@ -67,7 +75,7 @@ export async function exportSettings(input: unknown, databaseUrl?: string) {
 export async function importSettingsSnapshot(input: unknown, databaseUrl?: string) {
   const workspaceParsed = restoreWorkspaceInputSchema.safeParse(input);
   if (workspaceParsed.success) {
-    const { db, sqlite } = await getDb();
+    const { db, sqlite } = await getServiceDb(databaseUrl);
 
     try {
       const repository = createSettingsRepository(db, sqlite);
@@ -82,7 +90,7 @@ export async function importSettingsSnapshot(input: unknown, databaseUrl?: strin
     throw new ValidationError('Invalid import payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
 
   try {
     const repository = createSettingsRepository(db, sqlite);

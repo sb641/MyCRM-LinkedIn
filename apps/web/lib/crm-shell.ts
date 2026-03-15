@@ -1,4 +1,6 @@
 import type {
+  AccountDetailDto,
+  AccountSummaryDto,
   ContactConversationDetailsDto,
   DraftStatus,
   InboxItemDto,
@@ -66,6 +68,25 @@ export type ConversationDetailsViewModel = Omit<ContactConversationDetailsDto, '
   drafts: DraftSummaryViewModel[];
 };
 
+export type AccountSummaryViewModel = AccountSummaryDto & {
+  primaryAlias: string | null;
+  relationshipLabel: string;
+  relativeUpdatedAt: string;
+  badges: CrmBadge[];
+};
+
+export type AccountContactViewModel = AccountDetailDto['contacts'][number] & {
+  relationshipLabel: string;
+  relativeLastInteraction: string;
+};
+
+export type AccountDetailsViewModel = {
+  account: AccountSummaryViewModel & {
+    aliases: AccountDetailDto['account']['aliases'];
+  };
+  contacts: AccountContactViewModel[];
+};
+
 export type ShellRouteState = {
   selectedContactId: string | null;
   selectedConversationId: string | null;
@@ -75,8 +96,10 @@ export type ShellRouteState = {
 export type ShellDataState = {
   view: ShellViewState;
   inbox: InboxListItemViewModel[];
+  accounts: AccountSummaryViewModel[];
   selectedItem: InboxListItemViewModel | null;
   details: ConversationDetailsViewModel | null;
+  accountDetails: AccountDetailsViewModel | null;
   settings: SettingValueDto[];
   syncRuns: SyncRunViewModel[];
   activeSyncJob: SyncJobViewModel | null;
@@ -151,8 +174,10 @@ export function getShellRouteState(
 
 export function buildShellDataState(args: {
   inbox: InboxItemDto[];
+  accounts?: AccountSummaryDto[];
   route: ShellRouteState;
   details: ContactConversationDetailsDto | null;
+  accountDetails?: AccountDetailDto | null;
   syncRuns?: SyncRunDto[];
   jobs?: JobWithAuditDto[];
   settings?: SettingValueDto[];
@@ -164,8 +189,10 @@ export function buildShellDataState(args: {
   errorMessage?: string | null;
 }): ShellDataState {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
+  const accounts = buildAccountSummaryItems(args.accounts ?? []);
   const selectedItem = inbox.find((item) => item.contactId === args.route.selectedContactId) ?? null;
   const details = args.details ? buildConversationDetailsViewModel(args.details) : null;
+  const accountDetails = args.accountDetails ? buildAccountDetailsViewModel(args.accountDetails) : null;
   const settings = args.settings ?? [];
   const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
   const activeSyncJob = buildActiveSyncJobViewModel(args.jobs ?? []);
@@ -175,8 +202,10 @@ export function buildShellDataState(args: {
     return {
       view: 'error',
       inbox,
+      accounts,
       selectedItem,
       details: null,
+      accountDetails: null,
       settings,
       syncRuns,
       activeSyncJob,
@@ -190,8 +219,10 @@ export function buildShellDataState(args: {
     return {
       view: 'empty',
       inbox: [],
+      accounts,
       selectedItem: null,
       details: null,
+      accountDetails,
       settings,
       syncRuns,
       activeSyncJob,
@@ -204,8 +235,10 @@ export function buildShellDataState(args: {
   return {
     view: 'ready',
     inbox,
+    accounts,
     selectedItem,
     details,
+    accountDetails,
     settings,
     syncRuns,
     activeSyncJob,
@@ -327,6 +360,43 @@ export function buildConversationDetailsViewModel(
   };
 }
 
+export function buildAccountSummaryItems(accounts: AccountSummaryDto[]): AccountSummaryViewModel[] {
+  return accounts
+    .map((account) => ({
+      ...account,
+      primaryAlias: null,
+      relationshipLabel: account.contactCount === 1 ? '1 stakeholder' : `${account.contactCount} stakeholders`,
+      relativeUpdatedAt: formatRelativeTime(account.updatedAt),
+      badges: buildAccountBadges(account)
+    }))
+    .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.name.localeCompare(right.name));
+}
+
+export function buildAccountDetailsViewModel(details: AccountDetailDto): AccountDetailsViewModel {
+  const aliases = details.account.aliases;
+
+  return {
+    account: {
+      ...details.account,
+      aliases,
+      primaryAlias: aliases[0]?.alias ?? null,
+      relationshipLabel:
+        details.contacts.length === 1 ? '1 stakeholder' : `${details.contacts.length} stakeholders`,
+      relativeUpdatedAt: formatRelativeTime(details.account.updatedAt),
+      badges: buildAccountBadges({
+        ...details.account,
+        aliasCount: aliases.length,
+        contactCount: details.contacts.length
+      })
+    },
+    contacts: details.contacts.map((contact) => ({
+      ...contact,
+      relationshipLabel: formatRelationshipLabel(contact.relationshipStatus),
+      relativeLastInteraction: formatRelativeTime(contact.lastInteractionAt)
+    }))
+  };
+}
+
 function getSingleValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -403,6 +473,31 @@ function buildInboxBadges(item: InboxItemDto): CrmBadge[] {
 
   if (item.unreadCount > 0) {
     badges.push({ label: `${item.unreadCount} unread`, tone: 'warning' });
+  }
+
+  return badges;
+}
+
+function buildAccountBadges(account: Pick<AccountSummaryDto, 'contactCount' | 'aliasCount' | 'domain'>): CrmBadge[] {
+  const badges: CrmBadge[] = [
+    {
+      label: account.contactCount === 1 ? '1 stakeholder' : `${account.contactCount} stakeholders`,
+      tone: account.contactCount > 1 ? 'info' : 'neutral'
+    }
+  ];
+
+  if (account.aliasCount > 0) {
+    badges.push({
+      label: account.aliasCount === 1 ? '1 alias' : `${account.aliasCount} aliases`,
+      tone: 'neutral'
+    });
+  }
+
+  if (account.domain) {
+    badges.push({
+      label: account.domain,
+      tone: 'success'
+    });
   }
 
   return badges;

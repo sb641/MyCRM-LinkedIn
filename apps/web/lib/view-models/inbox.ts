@@ -1,4 +1,10 @@
-import type { ConversationDetailsViewModel, InboxListItemViewModel, ShellDataState } from '@/lib/crm-shell';
+import type {
+  AccountDetailsViewModel,
+  AccountSummaryViewModel,
+  ConversationDetailsViewModel,
+  InboxListItemViewModel,
+  ShellDataState
+} from '@/lib/crm-shell';
 
 export type InboxQueueKey = 'all' | 'needs-reply' | 'drafts' | 'follow-ups';
 export type InboxEntityMode = 'people' | 'accounts';
@@ -20,12 +26,17 @@ export type InboxWorkspaceViewModel = {
   activeQueue: InboxQueueKey;
   entityMode: InboxEntityMode;
   visibleItems: InboxListItemViewModel[];
+  visibleAccounts: AccountSummaryViewModel[];
   selectedItem: InboxListItemViewModel | null;
+  selectedAccount: AccountSummaryViewModel | null;
   details: ConversationDetailsViewModel | null;
+  accountDetails: AccountDetailsViewModel | null;
   filterChips: InboxFilterChip[];
   summary: {
     totalConversations: number;
     visibleConversations: number;
+    totalAccounts: number;
+    visibleAccounts: number;
     needsReplyCount: number;
     draftCount: number;
     followUpCount: number;
@@ -42,23 +53,32 @@ export function buildInboxWorkspaceViewModel(
   const activeQueue = getQueueKey(options?.queue);
   const entityMode = getEntityMode(options?.entity);
   const visibleItems = filterInboxItems(state.inbox, activeQueue);
+  const visibleAccounts = filterAccounts(state.accounts, visibleItems, activeQueue);
   const selectedItem =
     visibleItems.find((item) => item.contactId === state.selectedItem?.contactId) ??
     state.selectedItem ??
     visibleItems[0] ??
     null;
+  const selectedAccount =
+    visibleAccounts.find((account) => account.id === state.accountDetails?.account.id) ?? visibleAccounts[0] ?? null;
 
   return {
     queueTabs: buildQueueTabs(state.inbox, activeQueue),
     activeQueue,
     entityMode,
     visibleItems,
+    visibleAccounts,
     selectedItem,
+    selectedAccount,
     details: state.details && selectedItem?.contactId === state.details.contact.id ? state.details : null,
+    accountDetails:
+      state.accountDetails && selectedAccount?.id === state.accountDetails.account.id ? state.accountDetails : null,
     filterChips: buildFilterChips(state, entityMode),
     summary: {
       totalConversations: state.inbox.length,
       visibleConversations: visibleItems.length,
+      totalAccounts: state.accounts.length,
+      visibleAccounts: visibleAccounts.length,
       needsReplyCount: countQueueItems(state.inbox, 'needs-reply'),
       draftCount: countQueueItems(state.inbox, 'drafts'),
       followUpCount: countQueueItems(state.inbox, 'follow-ups')
@@ -152,4 +172,17 @@ function getEntityMode(value: string | null | undefined): InboxEntityMode {
   }
 
   return 'people';
+}
+
+function filterAccounts(
+  accounts: AccountSummaryViewModel[],
+  visibleItems: InboxListItemViewModel[],
+  queue: InboxQueueKey
+) {
+  if (queue === 'all') {
+    return accounts;
+  }
+
+  const visibleAccountIds = new Set(visibleItems.map((item) => item.accountId).filter(Boolean));
+  return accounts.filter((account) => visibleAccountIds.has(account.id));
 }

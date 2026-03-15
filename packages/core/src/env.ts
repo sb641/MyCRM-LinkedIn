@@ -18,6 +18,8 @@ export const envSchema = z.object({
 
 export type AppEnv = z.infer<typeof envSchema>;
 
+export type FeatureFlags = ReturnType<typeof getFeatureFlags>;
+
 export function parseEnv(input: Record<string, string | undefined>): AppEnv {
   return envSchema.parse(input);
 }
