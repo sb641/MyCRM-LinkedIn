@@ -64,9 +64,10 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const selectedAccountId = workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id ?? null;
   const assignableContacts = state.inbox.filter((item) => item.accountId !== selectedAccountId);
   const mergeCandidates = workspace.visibleAccounts.filter((account) => account.id !== selectedAccountId);
+  const stakeholderLanes = workspace.accountDetails ? buildStakeholderLanes(workspace.accountDetails.contacts) : [];
 
   function refreshWorkspace(nextAccountId?: string | null) {
-    const query = buildQuery(searchParams, {
+    const query = buildQueryParams(searchParams, {
       entity: workspace.entityMode,
       queue: workspace.activeQueue,
       sort: state.sort,
@@ -75,7 +76,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       conversationId: workspace.selectedItem?.conversationId ?? state.selectedItem?.conversationId
     });
 
-    window.location.assign(`${pathname}?${query.toString()}`);
+    const nextUrl = `${pathname}?${query.toString()}`;
+
+    window.location.assign(nextUrl);
   }
 
   async function handleGenerateDraft() {
@@ -731,6 +734,40 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                     </section>
                   </div>
 
+                  <section className="draft-stack" aria-label="Stakeholder lanes">
+                    <div className="conversation-row">
+                      <h3>Stakeholder lanes</h3>
+                      <span className="subtle-pill">Coverage map</span>
+                    </div>
+                    <div className="inbox-content-columns">
+                      {stakeholderLanes.map((lane) => (
+                        <section key={lane.key} className="stack-card" aria-label={`${lane.label} lane`}>
+                          <div className="conversation-row">
+                            <strong>{lane.label}</strong>
+                            <span className="subtle-pill">{lane.contacts.length}</span>
+                          </div>
+                          {lane.contacts.length === 0 ? (
+                            <p className="stack-copy">No stakeholders in this lane yet.</p>
+                          ) : (
+                            <div className="sync-run-list">
+                              {lane.contacts.map((contact) => (
+                                <article key={`${lane.key}-${contact.id}`} className="draft-card">
+                                  <div className="conversation-row">
+                                    <strong>{contact.name}</strong>
+                                    <span className="subtle-pill">{contact.relationshipLabel}</span>
+                                  </div>
+                                  <p className="conversation-meta">
+                                    {contact.position ?? contact.headline ?? 'No role yet'} · {contact.relativeLastInteraction}
+                                  </p>
+                                </article>
+                              ))}
+                            </div>
+                          )}
+                        </section>
+                      ))}
+                    </div>
+                  </section>
+
                   <div className="inbox-content-columns">
                     <section className="draft-stack" aria-label="Create account">
                       <div className="conversation-row">
@@ -1192,6 +1229,13 @@ function buildQuery(
   searchParams: ReturnType<typeof useSearchParams>,
   updates: Record<string, string | null | undefined>
 ) {
+  return Object.fromEntries(buildQueryParams(searchParams, updates).entries());
+}
+
+function buildQueryParams(
+  searchParams: ReturnType<typeof useSearchParams>,
+  updates: Record<string, string | null | undefined>
+) {
   const params = new URLSearchParams(searchParams.toString());
 
   for (const [key, value] of Object.entries(updates)) {
@@ -1203,7 +1247,7 @@ function buildQuery(
     params.set(key, value);
   }
 
-  return Object.fromEntries(params.entries());
+  return params;
 }
 
 function getRestorePreview(payload: string) {
@@ -1256,4 +1300,38 @@ function ErrorState({ message }: { message: string }) {
       <p>{message}</p>
     </div>
   );
+}
+
+type StakeholderContact = NonNullable<InboxWorkspaceViewModel['accountDetails']>['contacts'][number];
+
+function buildStakeholderLanes(contacts: StakeholderContact[]) {
+  const lanes = [
+    { key: 'executive', label: 'Executive', contacts: [] as StakeholderContact[] },
+    { key: 'director', label: 'Director', contacts: [] as StakeholderContact[] },
+    { key: 'manager-other', label: 'Manager / Other', contacts: [] as StakeholderContact[] },
+    { key: 'unclassified', label: 'Unclassified', contacts: [] as StakeholderContact[] }
+  ];
+
+  for (const contact of contacts ?? []) {
+    const seniority = (contact.seniorityBucket ?? '').trim().toLowerCase();
+
+    if (seniority === 'executive') {
+      lanes[0].contacts.push(contact);
+      continue;
+    }
+
+    if (seniority === 'director') {
+      lanes[1].contacts.push(contact);
+      continue;
+    }
+
+    if (seniority === 'manager' || seniority === 'other') {
+      lanes[2].contacts.push(contact);
+      continue;
+    }
+
+    lanes[3].contacts.push(contact);
+  }
+
+  return lanes;
 }

@@ -93,3 +93,31 @@ test('blocks workspace replace restore until confirmation is provided', async ({
 
   await expect(page.getByText('Type REPLACE WORKSPACE to confirm workspace replace restore')).toBeVisible();
 });
+
+test('assigns and merges accounts in account mode', async ({ page }) => {
+  await page.goto('/inbox?entity=accounts&queue=all&accountId=account-001&sort=recent');
+
+  const assignStakeholdersSection = page.getByLabel('Assign stakeholders');
+  const mergeAccountsSection = page.getByLabel('Merge accounts');
+
+  await expect(page.getByRole('heading', { name: 'Account workspace' })).toBeVisible();
+  await assignStakeholdersSection.scrollIntoViewIfNeeded();
+  await expect(assignStakeholdersSection).toBeInViewport();
+  await mergeAccountsSection.scrollIntoViewIfNeeded();
+  await expect(mergeAccountsSection).toBeInViewport();
+
+  await assignStakeholdersSection.scrollIntoViewIfNeeded();
+  await page.getByRole('checkbox', { name: /^Assign Contact 3$/ }).check();
+  await page.getByRole('button', { name: 'Assign selected' }).click();
+
+  await expect(page.getByText('Contact 3')).toBeVisible();
+
+  await mergeAccountsSection.scrollIntoViewIfNeeded();
+  await page.getByLabel('Source account').selectOption('account-002');
+  await page.getByRole('button', { name: 'Merge into current account' }).click();
+
+  await expect(page.getByRole('heading', { name: 'Company 1' })).toBeVisible();
+  await expect(page.getByText('8 stakeholders').first()).toBeVisible();
+  await expect(page.getByText('Company 2 Inc')).toBeVisible();
+  await expect(page.getByText('Contact 3')).toBeVisible();
+});

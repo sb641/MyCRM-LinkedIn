@@ -1,6 +1,8 @@
 import { getEnv } from '@mycrm/core';
 import { createNodeDb } from './server/node-sqlite';
 import {
+  accountAliases,
+  accounts,
   auditLog,
   contacts,
   conversations,
@@ -17,6 +19,8 @@ export async function seedDatabase(databaseUrl?: string) {
   const { db, sqlite } = await createNodeDb(databaseUrl ?? getEnv().DATABASE_URL);
   const seed = buildSeedData();
 
+  await db.insert(accounts).values(seed.accounts);
+  await db.insert(accountAliases).values(seed.accountAliases);
   await db.insert(contacts).values(seed.contacts);
   await db.insert(conversations).values(seed.conversations);
   await db.insert(messages).values(seed.messages);

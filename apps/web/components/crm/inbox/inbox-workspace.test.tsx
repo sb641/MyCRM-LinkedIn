@@ -64,6 +64,9 @@ describe('InboxWorkspace bulk draft flow', () => {
     expect(screen.getByRole('heading', { name: 'Account workspace' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Acme Corp' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Stakeholders' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Stakeholder lanes' })).toBeTruthy();
+    expect(screen.getByLabelText('Executive lane')).toBeTruthy();
+    expect(screen.getByLabelText('Director lane')).toBeTruthy();
     expect(screen.getAllByText('Acme Incorporated')).toHaveLength(2);
   });
 
@@ -345,7 +348,7 @@ function buildAccountsWorkspace(): InboxWorkspaceViewModel {
           company: 'Acme Corp',
           position: 'VP Sales',
           headline: 'VP Sales',
-          seniorityBucket: 'Executive',
+          seniorityBucket: 'Director',
           buyingRole: 'Champion',
           relationshipStatus: 'new',
           lastInteractionAt: 1,

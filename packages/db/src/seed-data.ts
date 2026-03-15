@@ -14,19 +14,49 @@ function makeId(prefix: string, index: number) {
 }
 
 export function buildSeedData() {
+  const accounts = Array.from({ length: 6 }, (_, index) => {
+    const timestamp = now - index * 86_400_000;
+
+    return {
+      id: makeId('account', index + 1),
+      name: `Company ${index + 1}`,
+      domain: `company${index + 1}.example`,
+      notes: index === 0 ? 'Priority ABM target' : null,
+      mergedIntoAccountId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+  });
+
+  const accountAliases = accounts.map((account, index) => ({
+    id: makeId('account-alias', index + 1),
+    accountId: account.id,
+    alias: `${account.name} Inc`,
+    source: 'seed',
+    createdAt: account.createdAt
+  }));
+
   const contacts = Array.from({ length: 20 }, (_, index) => {
     const relationshipStatus: RelationshipStatus =
       index % 5 === 0 ? 'followup_due' : index % 4 === 0 ? 'awaiting_reply' : index % 3 === 0 ? 'replied' : 'new';
     const timestamp = now - index * 86_400_000;
+    const account = accounts[index % accounts.length];
+    const seniorityBucket = index % 4 === 0 ? 'Executive' : index % 4 === 1 ? 'Director' : index % 4 === 2 ? 'Manager' : null;
+    const buyingRole = index % 3 === 0 ? 'Champion' : index % 3 === 1 ? 'Decision Maker' : 'Influencer';
 
     return {
       id: makeId('contact', index + 1),
       name: `Contact ${index + 1}`,
-      company: `Company ${((index % 6) + 1).toString()}`,
+      company: account.name,
       position: `Role ${((index % 4) + 1).toString()}`,
-      headline: `Role ${((index % 4) + 1).toString()} at Company ${((index % 6) + 1).toString()}`,
+      headline: `Role ${((index % 4) + 1).toString()} at ${account.name}`,
       profileUrl: `https://linkedin.com/in/contact-${index + 1}`,
       linkedinProfileId: `linkedin-profile-${index + 1}`,
+      accountId: account.id,
+      outreachStatus: index % 2 === 0 ? 'active' : 'paused',
+      nextReminderAt: relationshipStatus === 'followup_due' ? timestamp + 86_400_000 : null,
+      seniorityBucket,
+      buyingRole,
       relationshipStatus,
       lastInteractionAt: timestamp,
       lastReplyAt: relationshipStatus === 'replied' ? timestamp : null,
@@ -148,6 +178,8 @@ export function buildSeedData() {
   }));
 
   return {
+    accounts,
+    accountAliases,
     contacts,
     conversations,
     messages,
