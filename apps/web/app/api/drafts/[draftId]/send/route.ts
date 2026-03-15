@@ -7,7 +7,13 @@ export async function POST(
   context: { params: Promise<{ draftId: string }> }
 ) {
   const { draftId } = await context.params;
-  const body = await request.json();
+  let body: Record<string, unknown> = {};
+
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
 
   try {
     const result = await queueApprovedDraftSend({ ...body, draftId });

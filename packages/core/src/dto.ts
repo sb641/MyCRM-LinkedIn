@@ -78,6 +78,61 @@ export const contactConversationDetailsSchema = z.object({
   drafts: z.array(draftSummarySchema)
 });
 
+export const accountAliasSchema = z.object({
+  id: z.string().min(1),
+  accountId: z.string().min(1),
+  alias: z.string().min(1),
+  source: z.string().min(1),
+  createdAt: z.number().int()
+});
+
+export const accountSummarySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  domain: z.string().nullable(),
+  notes: z.string().nullable(),
+  contactCount: z.number().int().nonnegative(),
+  aliasCount: z.number().int().nonnegative(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int()
+});
+
+export const accountDetailSchema = z.object({
+  account: accountSummarySchema.extend({
+    aliases: z.array(accountAliasSchema)
+  }),
+  contacts: z.array(
+    z.object({
+      id: z.string().min(1),
+      name: z.string().min(1),
+      company: z.string().nullable(),
+      position: z.string().nullable(),
+      headline: z.string().nullable(),
+      seniorityBucket: z.string().nullable(),
+      buyingRole: z.string().nullable(),
+      relationshipStatus: relationshipStatusSchema,
+      lastInteractionAt: z.number().int().nullable()
+    })
+  )
+});
+
+export const createAccountInputSchema = z.object({
+  name: z.string().min(1).max(200),
+  domain: z.string().max(200).optional().default(''),
+  notes: z.string().max(2000).optional().default(''),
+  alias: z.string().max(200).optional().default('')
+});
+
+export const assignContactsToAccountInputSchema = z.object({
+  contactIds: z.array(z.string().min(1)).min(1)
+});
+
+export const mergeAccountsInputSchema = z.object({
+  sourceAccountId: z.string().min(1),
+  targetAccountId: z.string().min(1),
+  preserveSourceAsAlias: z.boolean().default(true)
+});
+
 export const updateRelationshipStatusInputSchema = z.object({
   relationshipStatus: relationshipStatusSchema
 });
@@ -255,6 +310,8 @@ export const settingsSnapshotSchema = z.object({
 });
 
 export const workspaceBackupDataSchema = z.object({
+  accounts: z.array(z.record(z.string(), z.unknown())),
+  accountAliases: z.array(z.record(z.string(), z.unknown())),
   contacts: z.array(z.record(z.string(), z.unknown())),
   conversations: z.array(z.record(z.string(), z.unknown())),
   messages: z.array(z.record(z.string(), z.unknown())),
@@ -370,6 +427,12 @@ export type InboxItemDto = z.infer<typeof inboxItemSchema>;
 export type MessageDto = z.infer<typeof messageDtoSchema>;
 export type DraftSummaryDto = z.infer<typeof draftSummarySchema>;
 export type ContactConversationDetailsDto = z.infer<typeof contactConversationDetailsSchema>;
+export type AccountAliasDto = z.infer<typeof accountAliasSchema>;
+export type AccountSummaryDto = z.infer<typeof accountSummarySchema>;
+export type AccountDetailDto = z.infer<typeof accountDetailSchema>;
+export type CreateAccountInput = z.infer<typeof createAccountInputSchema>;
+export type AssignContactsToAccountInput = z.infer<typeof assignContactsToAccountInputSchema>;
+export type MergeAccountsInput = z.infer<typeof mergeAccountsInputSchema>;
 export type UpdateRelationshipStatusInput = z.infer<typeof updateRelationshipStatusInputSchema>;
 export type ApproveDraftInput = z.infer<typeof approveDraftInputSchema>;
 export type GenerateDraftInput = z.infer<typeof generateDraftInputSchema>;

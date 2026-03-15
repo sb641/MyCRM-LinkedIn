@@ -39,8 +39,27 @@ test('queues manual sync and approved draft send', async ({ page }) => {
   await expect(page.getByText(/Sync queued for/)).toBeVisible();
 
   await page.getByRole('link', { name: /Contact 3/i }).click();
+  await expect(page.getByRole('heading', { name: 'Conversation and drafts' })).toBeVisible();
+  await expect(page.getByText('Approved draft 3')).toBeVisible();
   await page.getByText('Approved draft 3').locator('..').getByRole('button', { name: 'Send Message' }).click();
   await expect(page.getByText(/Queued send for/).last()).toBeVisible();
+});
+
+test('generates drafts in bulk for selected inbox people', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('checkbox', { name: /^Select Contact 1$/ }).evaluate((element: HTMLInputElement) => element.click());
+  await page.getByRole('checkbox', { name: /^Select Contact 2$/ }).evaluate((element: HTMLInputElement) => element.click());
+  await page.getByRole('button', { name: 'Bulk Generate (2)' }).click();
+
+  await expect(page.getByRole('dialog', { name: 'Generate drafts for selected people' })).toBeVisible();
+  await expect(page.getByLabel('Selected people', { exact: true })).toContainText('Contact 1');
+  await expect(page.getByLabel('Selected people', { exact: true })).toContainText('Contact 2');
+
+  await page.getByRole('button', { name: 'Generate 2 Drafts' }).click();
+
+  await expect(page.getByText('Generated 2 drafts for 2 selected people.')).toBeVisible();
+  await expect(page.getByText('Generated 2 drafts for 2 selected people.').last()).toBeVisible();
 });
 
 test('blocks workspace replace restore until confirmation is provided', async ({ page }) => {

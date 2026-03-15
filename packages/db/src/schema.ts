@@ -20,6 +20,37 @@ const timestamps = {
   updatedAt: integer('updated_at').notNull().default(sql`(unixepoch() * 1000)`)
 };
 
+export const accounts = sqliteTable(
+  'accounts',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    domain: text('domain'),
+    notes: text('notes'),
+    mergedIntoAccountId: text('merged_into_account_id'),
+    ...timestamps
+  },
+  (table) => [
+    index('accounts_name_idx').on(table.name),
+    index('accounts_merged_into_account_id_idx').on(table.mergedIntoAccountId)
+  ]
+);
+
+export const accountAliases = sqliteTable(
+  'account_aliases',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
+    alias: text('alias').notNull(),
+    source: text('source').notNull().default('manual'),
+    createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`)
+  },
+  (table) => [
+    uniqueIndex('account_aliases_account_alias_idx').on(table.accountId, table.alias),
+    index('account_aliases_alias_idx').on(table.alias)
+  ]
+);
+
 export const contacts = sqliteTable(
   'contacts',
   {
@@ -30,7 +61,7 @@ export const contacts = sqliteTable(
     headline: text('headline'),
     profileUrl: text('profile_url'),
     linkedinProfileId: text('linkedin_profile_id'),
-    accountId: text('account_id'),
+    accountId: text('account_id').references(() => accounts.id, { onDelete: 'set null' }),
     outreachStatus: text('outreach_status'),
     nextReminderAt: integer('next_reminder_at'),
     deletedAt: integer('deleted_at'),
@@ -164,6 +195,22 @@ export const auditLog = sqliteTable('audit_log', {
   createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`)
 });
 
+export const accountsRelations = relations(accounts, ({ one, many }) => ({
+  mergedInto: one(accounts, {
+    fields: [accounts.mergedIntoAccountId],
+    references: [accounts.id]
+  }),
+  aliases: many(accountAliases),
+  contacts: many(contacts)
+}));
+
+export const accountAliasesRelations = relations(accountAliases, ({ one }) => ({
+  account: one(accounts, {
+    fields: [accountAliases.accountId],
+    references: [accounts.id]
+  })
+}));
+
 export const contactsRelations = relations(contacts, ({ many }) => ({
   conversations: many(conversations),
   drafts: many(drafts)
@@ -205,6 +252,8 @@ export const draftVariantsRelations = relations(draftVariants, ({ one }) => ({
 }));
 
 export const allTables = {
+  accounts,
+  accountAliases,
   contacts,
   conversations,
   messages,

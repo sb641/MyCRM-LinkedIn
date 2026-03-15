@@ -1,8 +1,12 @@
 import { sql } from 'drizzle-orm';
 import type { NodeDatabaseClient, NodeSqliteConnection } from './server/node-sqlite';
-import { contacts, drafts } from './schema';
+import { accountAliases, accounts, contacts, drafts } from './schema';
 import type {
+  AccountDetailDto,
+  AccountSummaryDto,
+  AssignContactsToAccountInput,
   JobType,
+  MergeAccountsInput,
   RelationshipStatus,
   RestoreWorkspaceInput,
   SendStatus,
@@ -65,6 +69,15 @@ function normalizeWorkspaceRow(
   row: Record<string, unknown>
 ) {
   const columnMap: Record<string, Record<string, string>> = {
+    accounts: {
+      mergedIntoAccountId: 'merged_into_account_id',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    account_aliases: {
+      accountId: 'account_id',
+      createdAt: 'created_at'
+    },
     contacts: {
       profileUrl: 'profile_url',
       linkedinProfileId: 'linkedin_profile_id',
@@ -162,8 +175,6 @@ function toSqlLiteral(value: unknown) {
 }
 
 async function replaceTableRows(sqlite: RepositorySqliteConnection, tableName: string, rows: Array<Record<string, unknown>>) {
-  await sqlite.exec(`DELETE FROM ${tableName}`);
-
   for (const row of rows) {
     const normalizedRow = normalizeWorkspaceRow(tableName, row);
     const columns = Object.keys(normalizedRow);
@@ -314,6 +325,313 @@ export function createInboxRepository(_db: RepositoryDbClient, sqlite: Repositor
         lastSender: row.lastSender ?? null,
         unreadCount: Number(row.unreadCount ?? 0)
       }));
+    }
+  };
+}
+
+function createAccountId() {
+  return `account-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function createAccountAliasId() {
+  return `account-alias-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+export function createAccountRepository(db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
+  return {
+    async listAccounts(): Promise<AccountSummaryDto[]> {
+      const rows = await sqlite.all<{
+        id: string;
+        name: string;
+        domain: string | null;
+        notes: string | null;
+        createdAt: number;
+        updatedAt: number;
+        contactCount: number;
+        aliasCount: number;
+      }>(`
+        SELECT
+          a.id AS id,
+          a.name AS name,
+          a.domain AS domain,
+          a.notes AS notes,
+          a.created_at AS createdAt,
+          a.updated_at AS updatedAt,
+          COUNT(DISTINCT c.id) AS contactCount,
+          COUNT(DISTINCT aa.id) AS aliasCount
+        FROM accounts a
+        LEFT JOIN contacts c ON c.account_id = a.id AND c.deleted_at IS NULL
+        LEFT JOIN account_aliases aa ON aa.account_id = a.id
+        WHERE a.merged_into_account_id IS NULL
+        GROUP BY a.id
+        ORDER BY a.updated_at DESC, a.name ASC
+      `);
+
+      return rows.map((row) => ({
+        ...row,
+        domain: row.domain ?? null,
+        notes: row.notes ?? null,
+        contactCount: Number(row.contactCount ?? 0),
+        aliasCount: Number(row.aliasCount ?? 0)
+      }));
+    },
+
+    async findAccountById(accountId: string): Promise<AccountDetailDto | null> {
+      const safeAccountId = accountId.replace(/'/g, "''");
+      const accountRows = await sqlite.all<{
+        id: string;
+        name: string;
+        domain: string | null;
+        notes: string | null;
+        createdAt: number;
+        updatedAt: number;
+        contactCount: number;
+        aliasCount: number;
+      }>(`
+        SELECT
+          a.id AS id,
+          a.name AS name,
+          a.domain AS domain,
+          a.notes AS notes,
+          a.created_at AS createdAt,
+          a.updated_at AS updatedAt,
+          COUNT(DISTINCT c.id) AS contactCount,
+          COUNT(DISTINCT aa.id) AS aliasCount
+        FROM accounts a
+        LEFT JOIN contacts c ON c.account_id = a.id AND c.deleted_at IS NULL
+        LEFT JOIN account_aliases aa ON aa.account_id = a.id
+        WHERE a.id = '${safeAccountId}'
+        GROUP BY a.id
+        LIMIT 1
+      `);
+
+      if (accountRows.length === 0) {
+        return null;
+      }
+
+      const aliasRows = await sqlite.all<{
+        id: string;
+        accountId: string;
+        alias: string;
+        source: string;
+        createdAt: number;
+      }>(`
+        SELECT
+          id,
+          account_id AS accountId,
+          alias,
+          source,
+          created_at AS createdAt
+        FROM account_aliases
+        WHERE account_id = '${safeAccountId}'
+        ORDER BY created_at ASC, alias ASC
+      `);
+
+      const contactRows = await sqlite.all<{
+        id: string;
+        name: string;
+        company: string | null;
+        position: string | null;
+        headline: string | null;
+        seniorityBucket: string | null;
+        buyingRole: string | null;
+        relationshipStatus: RelationshipStatus;
+        lastInteractionAt: number | null;
+      }>(`
+        SELECT
+          id,
+          name,
+          company,
+          position,
+          headline,
+          seniority_bucket AS seniorityBucket,
+          buying_role AS buyingRole,
+          relationship_status AS relationshipStatus,
+          last_interaction_at AS lastInteractionAt
+        FROM contacts
+        WHERE account_id = '${safeAccountId}'
+          AND deleted_at IS NULL
+        ORDER BY name ASC
+      `);
+
+      return {
+        account: {
+          ...accountRows[0],
+          domain: accountRows[0].domain ?? null,
+          notes: accountRows[0].notes ?? null,
+          contactCount: Number(accountRows[0].contactCount ?? 0),
+          aliasCount: Number(accountRows[0].aliasCount ?? 0),
+          aliases: aliasRows
+        },
+        contacts: contactRows.map((row) => ({
+          ...row,
+          company: row.company ?? null,
+          position: row.position ?? null,
+          headline: row.headline ?? null,
+          seniorityBucket: row.seniorityBucket ?? null,
+          buyingRole: row.buyingRole ?? null,
+          lastInteractionAt: row.lastInteractionAt ?? null
+        }))
+      };
+    },
+
+    async createAccount(input: { name: string; domain?: string; notes?: string; alias?: string }) {
+      const accountId = createAccountId();
+      const now = Date.now();
+      const normalizedName = input.name.trim();
+
+      await db.insert(accounts).values({
+        id: accountId,
+        name: normalizedName,
+        domain: input.domain?.trim() ? input.domain.trim() : null,
+        notes: input.notes?.trim() ? input.notes.trim() : null,
+        mergedIntoAccountId: null,
+        createdAt: now,
+        updatedAt: now
+      });
+
+      const aliases = new Set([normalizedName]);
+      if (input.alias?.trim()) {
+        aliases.add(input.alias.trim());
+      }
+
+      for (const alias of aliases) {
+        await db.insert(accountAliases).values({
+          id: createAccountAliasId(),
+          accountId,
+          alias,
+          source: alias === normalizedName ? 'account_name' : 'manual',
+          createdAt: now
+        });
+      }
+
+      return this.findAccountById(accountId);
+    },
+
+    async assignContactsToAccount(accountId: string, input: AssignContactsToAccountInput) {
+      const safeAccountId = accountId.replace(/'/g, "''");
+      const existing = await sqlite.all<{ id: string }>(`SELECT id FROM accounts WHERE id = '${safeAccountId}' LIMIT 1`);
+      if (existing.length === 0) {
+        return 0;
+      }
+
+      const now = Date.now();
+      let updatedCount = 0;
+
+      for (const contactId of input.contactIds) {
+        const safeContactId = contactId.replace(/'/g, "''");
+        const contactRows = await sqlite.all<{ company: string | null }>(`
+          SELECT company
+          FROM contacts
+          WHERE id = '${safeContactId}'
+          LIMIT 1
+        `);
+
+        if (contactRows.length === 0) {
+          continue;
+        }
+
+        await sqlite.exec(`
+          UPDATE contacts
+          SET account_id = '${safeAccountId}',
+              updated_at = ${now}
+          WHERE id = '${safeContactId}'
+        `);
+        updatedCount += 1;
+
+        const company = contactRows[0].company?.trim();
+        if (company) {
+          const safeCompany = company.replace(/'/g, "''");
+          await sqlite.exec(`
+            INSERT OR IGNORE INTO account_aliases (id, account_id, alias, source, created_at)
+            VALUES ('${createAccountAliasId()}', '${safeAccountId}', '${safeCompany}', 'contact_company', ${now})
+          `);
+        }
+      }
+
+      await sqlite.exec(`
+        UPDATE accounts
+        SET updated_at = ${now}
+        WHERE id = '${safeAccountId}'
+      `);
+
+      return updatedCount;
+    },
+
+    async mergeAccounts(input: MergeAccountsInput) {
+      if (input.sourceAccountId === input.targetAccountId) {
+        throw new Error('Source and target accounts must be different');
+      }
+
+      const safeSourceId = input.sourceAccountId.replace(/'/g, "''");
+      const safeTargetId = input.targetAccountId.replace(/'/g, "''");
+      const now = Date.now();
+
+      const sourceRows = await sqlite.all<{ id: string; name: string }>(`
+        SELECT id, name
+        FROM accounts
+        WHERE id = '${safeSourceId}'
+          AND merged_into_account_id IS NULL
+        LIMIT 1
+      `);
+      const targetRows = await sqlite.all<{ id: string }>(`
+        SELECT id
+        FROM accounts
+        WHERE id = '${safeTargetId}'
+          AND merged_into_account_id IS NULL
+        LIMIT 1
+      `);
+
+      if (sourceRows.length === 0 || targetRows.length === 0) {
+        return null;
+      }
+
+      await withSqliteTransaction(sqlite, async () => {
+        await sqlite.exec(`
+          UPDATE contacts
+          SET account_id = '${safeTargetId}',
+              updated_at = ${now}
+          WHERE account_id = '${safeSourceId}'
+        `);
+
+        if (input.preserveSourceAsAlias) {
+          const safeSourceName = sourceRows[0].name.replace(/'/g, "''");
+          await sqlite.exec(`
+            INSERT OR IGNORE INTO account_aliases (id, account_id, alias, source, created_at)
+            VALUES ('${createAccountAliasId()}', '${safeTargetId}', '${safeSourceName}', 'merged_account_name', ${now})
+          `);
+        }
+
+        const sourceAliases = await sqlite.all<{ alias: string; source: string }>(`
+          SELECT alias, source
+          FROM account_aliases
+          WHERE account_id = '${safeSourceId}'
+        `);
+
+        for (const alias of sourceAliases) {
+          const safeAlias = alias.alias.replace(/'/g, "''");
+          const safeSource = alias.source.replace(/'/g, "''");
+          await sqlite.exec(`
+            INSERT OR IGNORE INTO account_aliases (id, account_id, alias, source, created_at)
+            VALUES ('${createAccountAliasId()}', '${safeTargetId}', '${safeAlias}', '${safeSource}', ${now})
+          `);
+        }
+
+        await sqlite.exec(`
+          UPDATE accounts
+          SET merged_into_account_id = '${safeTargetId}',
+              updated_at = ${now}
+          WHERE id = '${safeSourceId}'
+        `);
+
+        await sqlite.exec(`
+          UPDATE accounts
+          SET updated_at = ${now}
+          WHERE id = '${safeTargetId}'
+        `);
+      });
+
+      return this.findAccountById(input.targetAccountId);
     }
   };
 }
@@ -1223,6 +1541,8 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
           value: includeSecrets || !entry.isSecret ? entry.value : ''
         })),
         data: {
+          accounts: await listTableRows(sqlite, 'accounts'),
+          accountAliases: await listTableRows(sqlite, 'account_aliases'),
           contacts: await listTableRows(sqlite, 'contacts'),
           conversations: await listTableRows(sqlite, 'conversations'),
           messages: await listTableRows(sqlite, 'messages'),
@@ -1237,17 +1557,32 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
 
     async importWorkspace(args: RestoreWorkspaceInput) {
       if (args.mode === 'replace') {
-        await replaceTableRows(sqlite, 'audit_log', args.data.auditLog);
-        await replaceTableRows(sqlite, 'sync_runs', args.data.syncRuns);
-        await replaceTableRows(sqlite, 'jobs', args.data.jobs);
-        await replaceTableRows(sqlite, 'draft_variants', args.data.draftVariants);
-        await replaceTableRows(sqlite, 'drafts', args.data.drafts);
-        await replaceTableRows(sqlite, 'messages', args.data.messages);
-        await replaceTableRows(sqlite, 'conversations', args.data.conversations);
+        await sqlite.exec('DELETE FROM draft_variants');
+        await sqlite.exec('DELETE FROM drafts');
+        await sqlite.exec('DELETE FROM messages');
+        await sqlite.exec('DELETE FROM conversations');
+        await sqlite.exec('DELETE FROM contacts');
+        await sqlite.exec('DELETE FROM account_aliases');
+        await sqlite.exec('DELETE FROM accounts');
+        await sqlite.exec('DELETE FROM jobs');
+        await sqlite.exec('DELETE FROM sync_runs');
+        await sqlite.exec('DELETE FROM audit_log');
+
+        await replaceTableRows(sqlite, 'accounts', args.data.accounts);
         await replaceTableRows(sqlite, 'contacts', args.data.contacts);
+        await replaceTableRows(sqlite, 'account_aliases', args.data.accountAliases);
+        await replaceTableRows(sqlite, 'conversations', args.data.conversations);
+        await replaceTableRows(sqlite, 'messages', args.data.messages);
+        await replaceTableRows(sqlite, 'drafts', args.data.drafts);
+        await replaceTableRows(sqlite, 'draft_variants', args.data.draftVariants);
+        await replaceTableRows(sqlite, 'jobs', args.data.jobs);
+        await replaceTableRows(sqlite, 'sync_runs', args.data.syncRuns);
+        await replaceTableRows(sqlite, 'audit_log', args.data.auditLog);
         await sqlite.exec('DELETE FROM settings');
         await clearSecretStore();
       } else {
+        await upsertTableRows(sqlite, 'accounts', args.data.accounts);
+        await upsertTableRows(sqlite, 'account_aliases', args.data.accountAliases);
         await upsertTableRows(sqlite, 'contacts', args.data.contacts);
         await upsertTableRows(sqlite, 'conversations', args.data.conversations);
         await upsertTableRows(sqlite, 'messages', args.data.messages);

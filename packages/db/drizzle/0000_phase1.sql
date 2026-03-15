@@ -1,3 +1,26 @@
+CREATE TABLE `accounts` (
+  `id` text PRIMARY KEY NOT NULL,
+  `name` text NOT NULL,
+  `domain` text,
+  `notes` text,
+  `merged_into_account_id` text,
+  `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  `updated_at` integer NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE INDEX `accounts_name_idx` ON `accounts` (`name`);
+CREATE INDEX `accounts_merged_into_account_id_idx` ON `accounts` (`merged_into_account_id`);
+
+CREATE TABLE `account_aliases` (
+  `id` text PRIMARY KEY NOT NULL,
+  `account_id` text NOT NULL,
+  `alias` text NOT NULL,
+  `source` text NOT NULL DEFAULT 'manual',
+  `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON DELETE cascade
+);
+CREATE UNIQUE INDEX `account_aliases_account_alias_idx` ON `account_aliases` (`account_id`, `alias`);
+CREATE INDEX `account_aliases_alias_idx` ON `account_aliases` (`alias`);
+
 CREATE TABLE `contacts` (
   `id` text PRIMARY KEY NOT NULL,
   `name` text NOT NULL,
@@ -6,12 +29,19 @@ CREATE TABLE `contacts` (
   `headline` text,
   `profile_url` text,
   `linkedin_profile_id` text,
+  `account_id` text,
+  `outreach_status` text,
+  `next_reminder_at` integer,
+  `deleted_at` integer,
+  `seniority_bucket` text,
+  `buying_role` text,
   `relationship_status` text NOT NULL DEFAULT 'new',
   `last_interaction_at` integer,
   `last_reply_at` integer,
   `last_sent_at` integer,
   `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
-  `updated_at` integer NOT NULL DEFAULT (unixepoch() * 1000)
+  `updated_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON DELETE set null
 );
 CREATE UNIQUE INDEX `contacts_linkedin_profile_id_idx` ON `contacts` (`linkedin_profile_id`);
 CREATE INDEX `contacts_relationship_status_idx` ON `contacts` (`relationship_status`);

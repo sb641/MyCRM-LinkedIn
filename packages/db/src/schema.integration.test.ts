@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
-import { createDb } from './client';
-import { createJobRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
-import { contacts, conversations, drafts, messages } from './schema';
+import { createNodeDb } from './server/node-sqlite';
+import { createAccountRepository, createJobRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
+import { accounts, accountAliases, contacts, conversations, drafts, messages } from './schema';
 import { buildSeedData } from './seed-data';
 
 function createTempDbPath(name: string) {
@@ -13,7 +13,7 @@ function createTempDbPath(name: string) {
 }
 
 async function migrateDb(databaseUrl: string) {
-  const { db, sqlite } = await createDb(databaseUrl);
+  const { db, sqlite } = await createNodeDb(databaseUrl);
   const existingTables = await sqlite.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'contacts'");
   if (existingTables.length === 0) {
     const migrationSql = fs.readFileSync(path.resolve(import.meta.dirname, '../drizzle/0000_phase1.sql'), 'utf8');
@@ -62,6 +62,8 @@ describe('Phase 1 schema', () => {
 
     expect(names).toContain('contacts_relationship_status_idx');
     expect(names).toContain('contacts_last_interaction_at_idx');
+    expect(names).toContain('accounts_name_idx');
+    expect(names).toContain('account_aliases_account_alias_idx');
     expect(names).toContain('conversations_contact_id_idx');
     expect(names).toContain('messages_conversation_timestamp_idx');
     expect(names).toContain('jobs_status_scheduled_for_idx');
@@ -134,7 +136,7 @@ describe('Phase 1 schema', () => {
       await sqlite.close();
     }
 
-    const reopened = await createDb(databaseUrl);
+    const reopened = await createNodeDb(databaseUrl);
 
     try {
       const jobs = await createJobRepository(reopened.db, reopened.sqlite).listJobs();
@@ -294,6 +296,8 @@ describe('Phase 1 schema', () => {
       const snapshot = await repository.exportWorkspace(false);
 
       expect(snapshot.scope).toBe('workspace');
+      expect(snapshot.data.accounts).toEqual([]);
+      expect(snapshot.data.accountAliases).toEqual([]);
       expect(snapshot.data.contacts.length).toBeGreaterThan(0);
       expect(snapshot.data.conversations.length).toBeGreaterThan(0);
       expect(snapshot.settings.length).toBeGreaterThan(0);
@@ -323,6 +327,8 @@ describe('Phase 1 schema', () => {
         mode: 'replace',
         settings: [{ key: 'followup_days', value: '14', isSecret: false }],
         data: {
+          accounts: [],
+          accountAliases: [],
           contacts: [seed.contacts[5]],
           conversations: [seed.conversations[5]],
           messages: seed.messages.filter((message) => message.conversationId === seed.conversations[5].id).slice(0, 1),
@@ -365,6 +371,8 @@ describe('Phase 1 schema', () => {
         mode: 'merge',
         settings: [{ key: 'default_account_id', value: 'account-2', isSecret: false }],
         data: {
+          accounts: [],
+          accountAliases: [],
           contacts: [seed.contacts[1]],
           conversations: [seed.conversations[1]],
           messages: seed.messages.filter((message) => message.conversationId === seed.conversations[1].id).slice(0, 1),
@@ -478,6 +486,8 @@ describe('Phase 1 schema', () => {
         mode: 'replace',
         settings: [{ key: 'followup_days', value: '21', isSecret: false }],
         data: {
+          accounts: [],
+          accountAliases: [],
           contacts: [seed.contacts[2]],
           conversations: [seed.conversations[2]],
           messages: seed.messages.filter((message) => message.conversationId === seed.conversations[2].id).slice(0, 1),
@@ -520,6 +530,8 @@ describe('Phase 1 schema', () => {
         mode: 'merge',
         settings: [{ key: 'default_account_id', value: 'account-3', isSecret: false }],
         data: {
+          accounts: [],
+          accountAliases: [],
           contacts: [seed.contacts[3]],
           conversations: [seed.conversations[3]],
           messages: seed.messages.filter((message) => message.conversationId === seed.conversations[3].id).slice(0, 1),
@@ -535,6 +547,101 @@ describe('Phase 1 schema', () => {
 
       expect(listed.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('existing-secret');
       expect(listed.find((entry) => entry.key === 'default_account_id')?.value).toBe('account-3');
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('creates accounts, assigns contacts, and preserves aliases', async () => {
+    const databaseUrl = `file:${createTempDbPath('accounts-create-assign')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 2));
+
+      const repository = createAccountRepository(db, sqlite);
+      const created = await repository.createAccount({
+        name: 'Acme Corp',
+        alias: 'Acme'
+      });
+
+      expect(created?.account.name).toBe('Acme Corp');
+      expect(created?.account.aliases).toHaveLength(2);
+
+      const updatedCount = await repository.assignContactsToAccount(created!.account.id, {
+        contactIds: [seed.contacts[0].id, seed.contacts[1].id]
+      });
+
+      expect(updatedCount).toBe(2);
+
+      const assigned = await repository.findAccountById(created!.account.id);
+      expect(assigned?.contacts).toHaveLength(2);
+      expect(assigned?.contacts.every((contact) => contact.id === seed.contacts[0].id || contact.id === seed.contacts[1].id)).toBe(true);
+
+      expect(assigned?.contacts.some((contact) => contact.id === seed.contacts[0].id)).toBe(true);
+      expect(assigned?.contacts.some((contact) => contact.id === seed.contacts[1].id)).toBe(true);
+      expect(assigned?.account.aliases.some((alias) => alias.alias === 'Acme')).toBe(true);
+
+      expect(assigned?.account.aliases.some((alias) => alias.alias === 'Acme Corp')).toBe(true);
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('merges accounts safely and keeps source aliases', async () => {
+    const databaseUrl = `file:${createTempDbPath('accounts-merge')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(contacts).values(seed.contacts.slice(0, 2));
+      await db.insert(accounts).values([
+        {
+          id: 'account-source',
+          name: 'Source Co',
+          domain: null,
+          notes: null,
+          mergedIntoAccountId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        },
+        {
+          id: 'account-target',
+          name: 'Target Co',
+          domain: null,
+          notes: null,
+          mergedIntoAccountId: null,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        }
+      ]);
+      await db.insert(accountAliases).values([
+        {
+          id: 'alias-source',
+          accountId: 'account-source',
+          alias: 'Source Alias',
+          source: 'manual',
+          createdAt: Date.now()
+        }
+      ]);
+      await db.update(contacts).set({ accountId: 'account-source' }).where(eq(contacts.id, seed.contacts[0].id));
+
+      const repository = createAccountRepository(db, sqlite);
+      const merged = await repository.mergeAccounts({
+        sourceAccountId: 'account-source',
+        targetAccountId: 'account-target',
+        preserveSourceAsAlias: true
+      });
+
+      expect(merged?.account.id).toBe('account-target');
+      expect(merged?.account.aliases.some((alias) => alias.alias === 'Source Co')).toBe(true);
+      expect(merged?.account.aliases.some((alias) => alias.alias === 'Source Alias')).toBe(true);
+
+      const mergedDetail = await repository.findAccountById('account-target');
+      expect(mergedDetail?.contacts.some((contact) => contact.id === seed.contacts[0].id)).toBe(true);
+
+      expect(mergedDetail?.contacts.some((contact) => contact.id === seed.contacts[0].id)).toBe(true);
     } finally {
       await sqlite.close();
     }
