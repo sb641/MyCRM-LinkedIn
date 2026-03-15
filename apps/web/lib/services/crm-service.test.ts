@@ -153,4 +153,38 @@ describe('crm service', () => {
     expect(result.drafts[0]?.draft.goalText).toContain('Reply with a time next week');
   });
 
+  it('creates unique draft and variant ids across bulk-generated drafts', async () => {
+    const databaseUrl = createTempDbUrl('bulk-generate-ids');
+    await runMigrations(databaseUrl);
+    await seedDatabase(databaseUrl);
+
+    const result = await generateDraftsBulk(
+      {
+        selections: [
+          { contactId: 'contact-001', conversationId: 'conversation-001' },
+          { contactId: 'contact-002', conversationId: 'conversation-002' }
+        ],
+        goal: 'Book a short intro call',
+        options: {
+          includeLink: undefined,
+          callToAction: undefined,
+          tone: undefined,
+          constraints: undefined,
+          useRecentConversationContext: true,
+          useAccountContext: true,
+          varyMessageByRole: true,
+          avoidRepeatingAngleWithinAccount: true
+        }
+      },
+      databaseUrl
+    );
+
+    const draftIds = result.drafts.map((entry) => entry.draft.draftId);
+    const variantIds = result.drafts.flatMap((entry) => entry.draft.variants.map((variant) => variant.id));
+
+    expect(new Set(draftIds).size).toBe(draftIds.length);
+    expect(new Set(variantIds).size).toBe(variantIds.length);
+    expect(variantIds.every((variantId, index) => variantId.includes(draftIds[Math.floor(index / 2)] ?? ''))).toBe(true);
+  });
+
 });
