@@ -47,6 +47,21 @@ CREATE UNIQUE INDEX `contacts_linkedin_profile_id_idx` ON `contacts` (`linkedin_
 CREATE INDEX `contacts_relationship_status_idx` ON `contacts` (`relationship_status`);
 CREATE INDEX `contacts_last_interaction_at_idx` ON `contacts` (`last_interaction_at`);
 
+CREATE TABLE `reminders` (
+  `id` text PRIMARY KEY NOT NULL,
+  `entity_type` text NOT NULL,
+  `entity_id` text NOT NULL,
+  `status` text NOT NULL DEFAULT 'due_today',
+  `rule_type` text NOT NULL DEFAULT 'manual',
+  `due_at` integer NOT NULL,
+  `completed_at` integer,
+  `note` text,
+  `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  `updated_at` integer NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE INDEX `reminders_entity_idx` ON `reminders` (`entity_type`, `entity_id`);
+CREATE INDEX `reminders_status_due_at_idx` ON `reminders` (`status`, `due_at`);
+
 CREATE TABLE `conversations` (
   `id` text PRIMARY KEY NOT NULL,
   `contact_id` text NOT NULL,

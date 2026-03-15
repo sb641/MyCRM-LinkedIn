@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createNodeDb } from './server/node-sqlite';
-import { createAccountRepository, createJobRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
+import { createAccountRepository, createJobRepository, createReminderRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
 import { accounts, accountAliases, contacts, conversations, drafts, messages } from './schema';
 import { buildSeedData } from './seed-data';
 
@@ -532,6 +532,7 @@ describe('Phase 1 schema', () => {
         data: {
           accounts: [],
           accountAliases: [],
+          reminders: [],
           contacts: [seed.contacts[3]],
           conversations: [seed.conversations[3]],
           messages: seed.messages.filter((message) => message.conversationId === seed.conversations[3].id).slice(0, 1),
@@ -642,6 +643,49 @@ describe('Phase 1 schema', () => {
       expect(mergedDetail?.contacts.some((contact) => contact.id === seed.contacts[0].id)).toBe(true);
 
       expect(mergedDetail?.contacts.some((contact) => contact.id === seed.contacts[0].id)).toBe(true);
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('creates and completes reminders while syncing contact next reminder state', async () => {
+    const databaseUrl = `file:${createTempDbPath('reminders-lifecycle')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 1));
+      await db.insert(contacts).values(seed.contacts.slice(0, 1));
+
+      const repository = createReminderRepository(db, sqlite);
+      const dueAt = Date.now() + 2 * 60 * 60 * 1000;
+      const created = await repository.upsertReminder({
+        entityType: 'contact',
+        entityId: seed.contacts[0].id,
+        ruleType: 'manual',
+        dueAt,
+        note: 'Follow up tomorrow morning'
+      });
+
+      expect(created?.entityType).toBe('contact');
+      expect(created?.dueAt).toBe(dueAt);
+
+      const [contactRow] = await sqlite.all<{ next_reminder_at: number | null }>(
+        `SELECT next_reminder_at FROM contacts WHERE id = '${seed.contacts[0].id}' LIMIT 1`
+      );
+      expect(contactRow?.next_reminder_at).toBe(dueAt);
+
+      const completed = await repository.updateReminder(created!.id, {
+        status: 'completed',
+        completedAt: Date.now()
+      });
+
+      expect(completed?.status).toBe('completed');
+
+      const [clearedContactRow] = await sqlite.all<{ next_reminder_at: number | null }>(
+        `SELECT next_reminder_at FROM contacts WHERE id = '${seed.contacts[0].id}' LIMIT 1`
+      );
+      expect(clearedContactRow?.next_reminder_at).toBeNull();
     } finally {
       await sqlite.close();
     }

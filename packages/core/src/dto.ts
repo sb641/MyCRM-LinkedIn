@@ -3,6 +3,9 @@ import {
   draftStatusSchema,
   jobStatusSchema,
   jobTypeSchema,
+  reminderEntityTypeSchema,
+  reminderRuleTypeSchema,
+  reminderStatusSchema,
   relationshipStatusSchema,
   sendStatusSchema
 } from './statuses';
@@ -114,6 +117,34 @@ export const accountDetailSchema = z.object({
       lastInteractionAt: z.number().int().nullable()
     })
   )
+});
+
+export const reminderSchema = z.object({
+  id: z.string().min(1),
+  entityType: reminderEntityTypeSchema,
+  entityId: z.string().min(1),
+  status: reminderStatusSchema,
+  ruleType: reminderRuleTypeSchema,
+  dueAt: z.number().int(),
+  completedAt: z.number().int().nullable(),
+  note: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int()
+});
+
+export const createReminderInputSchema = z.object({
+  entityType: reminderEntityTypeSchema,
+  entityId: z.string().min(1),
+  ruleType: reminderRuleTypeSchema.default('manual'),
+  dueAt: z.number().int(),
+  note: z.string().max(1000).optional().default('')
+});
+
+export const updateReminderInputSchema = z.object({
+  dueAt: z.number().int().optional(),
+  note: z.string().max(1000).optional(),
+  status: reminderStatusSchema.optional(),
+  completedAt: z.number().int().nullable().optional()
 });
 
 export const createAccountInputSchema = z.object({
@@ -312,6 +343,7 @@ export const settingsSnapshotSchema = z.object({
 export const workspaceBackupDataSchema = z.object({
   accounts: z.array(z.record(z.string(), z.unknown())),
   accountAliases: z.array(z.record(z.string(), z.unknown())),
+  reminders: z.array(z.record(z.string(), z.unknown())),
   contacts: z.array(z.record(z.string(), z.unknown())),
   conversations: z.array(z.record(z.string(), z.unknown())),
   messages: z.array(z.record(z.string(), z.unknown())),
@@ -430,9 +462,12 @@ export type ContactConversationDetailsDto = z.infer<typeof contactConversationDe
 export type AccountAliasDto = z.infer<typeof accountAliasSchema>;
 export type AccountSummaryDto = z.infer<typeof accountSummarySchema>;
 export type AccountDetailDto = z.infer<typeof accountDetailSchema>;
+export type ReminderDto = z.infer<typeof reminderSchema>;
 export type CreateAccountInput = z.infer<typeof createAccountInputSchema>;
 export type AssignContactsToAccountInput = z.infer<typeof assignContactsToAccountInputSchema>;
 export type MergeAccountsInput = z.infer<typeof mergeAccountsInputSchema>;
+export type CreateReminderInput = z.infer<typeof createReminderInputSchema>;
+export type UpdateReminderInput = z.infer<typeof updateReminderInputSchema>;
 export type UpdateRelationshipStatusInput = z.infer<typeof updateRelationshipStatusInputSchema>;
 export type ApproveDraftInput = z.infer<typeof approveDraftInputSchema>;
 export type GenerateDraftInput = z.infer<typeof generateDraftInputSchema>;

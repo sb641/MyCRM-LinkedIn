@@ -31,6 +31,8 @@ export type QuickAction = {
 export type InboxListItemViewModel = InboxItemDto & {
   priorityRank: number;
   relativeLastMessage: string;
+  reminderLabel: string | null;
+  reminderTone: CrmBadgeTone | null;
   badges: CrmBadge[];
   quickActions: QuickAction[];
 };
@@ -46,6 +48,8 @@ export type ContactSummaryViewModel = ContactConversationDetailsDto['contact'] &
   followupDueAt: number | null;
   followupDueLabel: string;
   followupUrgency: 'none' | 'soon' | 'due' | 'overdue';
+  reminderLabel: string | null;
+  reminderTone: CrmBadgeTone | null;
   badges: CrmBadge[];
   quickActions: QuickAction[];
   lastInteractionLabel: string;
@@ -72,6 +76,8 @@ export type AccountSummaryViewModel = AccountSummaryDto & {
   primaryAlias: string | null;
   relationshipLabel: string;
   relativeUpdatedAt: string;
+  reminderLabel: string | null;
+  reminderTone: CrmBadgeTone | null;
   badges: CrmBadge[];
 };
 
@@ -323,6 +329,8 @@ export function buildInboxListItems(inbox: InboxItemDto[], sort: InboxSortMode):
       ...item,
       priorityRank: getPriorityRank(item),
       relativeLastMessage: formatRelativeTime(item.lastMessageAt),
+      reminderLabel: formatReminderLabel(item.nextReminderAt),
+      reminderTone: getReminderTone(item.nextReminderAt),
       badges: buildInboxBadges(item),
       quickActions: buildInboxQuickActions(item)
     }))
@@ -345,6 +353,8 @@ export function buildConversationDetailsViewModel(
       followupDueAt: followupRecommendation.followupDueAt,
       followupDueLabel: followupRecommendation.followupDueLabel,
       followupUrgency: followupRecommendation.urgency,
+      reminderLabel: formatReminderLabel(details.contact.nextReminderAt),
+      reminderTone: getReminderTone(details.contact.nextReminderAt),
       badges: buildContactBadges(details, derivedRelationshipStatus, followupRecommendation),
       quickActions: buildContactQuickActions(derivedRelationshipStatus, details.drafts.length, followupRecommendation),
       lastInteractionLabel: formatRelativeTime(details.contact.lastInteractionAt)
@@ -367,6 +377,8 @@ export function buildAccountSummaryItems(accounts: AccountSummaryDto[]): Account
       primaryAlias: null,
       relationshipLabel: account.contactCount === 1 ? '1 stakeholder' : `${account.contactCount} stakeholders`,
       relativeUpdatedAt: formatRelativeTime(account.updatedAt),
+      reminderLabel: null,
+      reminderTone: null,
       badges: buildAccountBadges(account)
     }))
     .sort((left, right) => (right.updatedAt ?? 0) - (left.updatedAt ?? 0) || left.name.localeCompare(right.name));
@@ -383,6 +395,8 @@ export function buildAccountDetailsViewModel(details: AccountDetailDto): Account
       relationshipLabel:
         details.contacts.length === 1 ? '1 stakeholder' : `${details.contacts.length} stakeholders`,
       relativeUpdatedAt: formatRelativeTime(details.account.updatedAt),
+      reminderLabel: null,
+      reminderTone: null,
       badges: buildAccountBadges({
         ...details.account,
         aliasCount: aliases.length,
@@ -473,6 +487,12 @@ function buildInboxBadges(item: InboxItemDto): CrmBadge[] {
 
   if (item.unreadCount > 0) {
     badges.push({ label: `${item.unreadCount} unread`, tone: 'warning' });
+  }
+
+  const reminderLabel = formatReminderLabel(item.nextReminderAt);
+  const reminderTone = getReminderTone(item.nextReminderAt);
+  if (reminderLabel && reminderTone) {
+    badges.push({ label: reminderLabel, tone: reminderTone });
   }
 
   return badges;
@@ -583,6 +603,12 @@ function buildContactBadges(
       label: followupRecommendation.followupDueLabel,
       tone: getFollowupTone(followupRecommendation.urgency)
     });
+  }
+
+  const reminderLabel = formatReminderLabel(details.contact.nextReminderAt);
+  const reminderTone = getReminderTone(details.contact.nextReminderAt);
+  if (reminderLabel && reminderTone) {
+    badges.push({ label: reminderLabel, tone: reminderTone });
   }
 
   return badges;
@@ -807,4 +833,49 @@ function formatSyncOperatorMessage(error: string | null) {
   }
 
   return 'Browser sync needs operator attention. Review the latest worker error before retrying.';
+}
+
+function formatReminderLabel(nextReminderAt: number | null | undefined) {
+  if (!nextReminderAt) {
+    return null;
+  }
+
+  const current = new Date();
+  const startOfToday = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime();
+  const startOfTomorrow = startOfToday + 24 * 60 * 60 * 1000;
+  const startOfDayAfterTomorrow = startOfTomorrow + 24 * 60 * 60 * 1000;
+
+  if (nextReminderAt < startOfToday) {
+    return 'Reminder overdue';
+  }
+
+  if (nextReminderAt < startOfTomorrow) {
+    return 'Reminder today';
+  }
+
+  if (nextReminderAt < startOfDayAfterTomorrow) {
+    return 'Reminder tomorrow';
+  }
+
+  return `Reminder ${formatRelativeTime(nextReminderAt)}`;
+}
+
+function getReminderTone(nextReminderAt: number | null | undefined): CrmBadgeTone | null {
+  if (!nextReminderAt) {
+    return null;
+  }
+
+  const current = new Date();
+  const startOfToday = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime();
+  const startOfTomorrow = startOfToday + 24 * 60 * 60 * 1000;
+
+  if (nextReminderAt < startOfToday) {
+    return 'danger';
+  }
+
+  if (nextReminderAt < startOfTomorrow) {
+    return 'warning';
+  }
+
+  return 'info';
 }

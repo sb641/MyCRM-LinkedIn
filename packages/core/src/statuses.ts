@@ -40,6 +40,9 @@ export const jobTypes = [
 ] as const;
 
 export const syncRunStatuses = ['running', 'succeeded', 'failed'] as const;
+export const reminderEntityTypes = ['contact', 'account', 'campaign'] as const;
+export const reminderStatuses = ['none', 'due_today', 'due_tomorrow', 'overdue', 'completed'] as const;
+export const reminderRuleTypes = ['manual', 'after_send', 'fixed_date'] as const;
 
 export const relationshipStatusSchema = z.enum(relationshipStatuses);
 export const draftStatusSchema = z.enum(draftStatuses);
@@ -47,6 +50,9 @@ export const sendStatusSchema = z.enum(sendStatuses);
 export const jobStatusSchema = z.enum(jobStatuses);
 export const jobTypeSchema = z.enum(jobTypes);
 export const syncRunStatusSchema = z.enum(syncRunStatuses);
+export const reminderEntityTypeSchema = z.enum(reminderEntityTypes);
+export const reminderStatusSchema = z.enum(reminderStatuses);
+export const reminderRuleTypeSchema = z.enum(reminderRuleTypes);
 
 export type RelationshipStatus = (typeof relationshipStatuses)[number];
 export type DraftStatus = (typeof draftStatuses)[number];
@@ -54,3 +60,6 @@ export type SendStatus = (typeof sendStatuses)[number];
 export type JobStatus = (typeof jobStatuses)[number];
 export type JobType = (typeof jobTypes)[number];
 export type SyncRunStatus = (typeof syncRunStatuses)[number];
+export type ReminderEntityType = (typeof reminderEntityTypes)[number];
+export type ReminderStatus = (typeof reminderStatuses)[number];
+export type ReminderRuleType = (typeof reminderRuleTypes)[number];

@@ -6,6 +6,8 @@ import { useState } from 'react';
 import type { FeatureFlags } from '@mycrm/core';
 import type { ShellDataState } from '@/lib/crm-shell';
 import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
+import { ReminderModal } from '@/components/crm/modals/reminder-modal';
+import { ReminderBadge } from '@/components/crm/shared/reminder-badge';
 import type { InboxWorkspaceViewModel } from '@/lib/view-models/inbox';
 
 const WORKSPACE_REPLACE_CONFIRMATION = 'REPLACE WORKSPACE';
@@ -58,6 +60,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [mergeSourceAccountId, setMergeSourceAccountId] = useState('');
   const [isAssigningContacts, setIsAssigningContacts] = useState(false);
   const [isMergingAccounts, setIsMergingAccounts] = useState(false);
+  const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
+  const [reminderMessage, setReminderMessage] = useState<string | null>(null);
+  const [reminderError, setReminderError] = useState<string | null>(null);
 
   const restorePreview = getRestorePreview(backupPayload);
   const isAccountsMode = workspace.entityMode === 'accounts';
@@ -425,6 +430,88 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     }
   }
 
+  async function handleSaveReminder(input: { dueAt: number; note: string }) {
+    const entityType = isAccountsMode ? 'account' : 'contact';
+    const entityId = isAccountsMode
+      ? workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id
+      : workspace.details?.contact.id ?? workspace.selectedItem?.contactId;
+
+    if (!entityId) {
+      throw new Error('No record selected for reminder');
+    }
+
+    setReminderMessage(null);
+    setReminderError(null);
+
+    const response = await fetch('/api/reminders', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        entityType,
+        entityId,
+        dueAt: input.dueAt,
+        note: input.note,
+        ruleType: 'manual'
+      })
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      throw new Error(body.message ?? body.error?.message ?? 'Unable to save reminder');
+    }
+
+    setReminderMessage('Reminder saved');
+    refreshWorkspace(selectedAccountId);
+  }
+
+  async function handleCompleteReminder() {
+    const entityType = isAccountsMode ? 'account' : 'contact';
+    const entityId = isAccountsMode
+      ? workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id
+      : workspace.details?.contact.id ?? workspace.selectedItem?.contactId;
+
+    if (!entityId) {
+      setReminderError('No record selected for reminder');
+      return;
+    }
+
+    setReminderMessage(null);
+    setReminderError(null);
+
+    try {
+      const listResponse = await fetch(`/api/reminders?entityType=${entityType}&entityId=${encodeURIComponent(entityId)}`);
+      const listBody = await listResponse.json();
+      if (!listResponse.ok) {
+        throw new Error(listBody.message ?? listBody.error?.message ?? 'Unable to load reminders');
+      }
+
+      const activeReminder = (listBody.reminders as Array<{ id: string; completedAt: number | null }>).find(
+        (entry) => entry.completedAt === null
+      );
+      if (!activeReminder) {
+        throw new Error('No active reminder found');
+      }
+
+      const response = await fetch(`/api/reminders/${encodeURIComponent(activeReminder.id)}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ status: 'completed', completedAt: Date.now() })
+      });
+      const body = await response.json();
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to complete reminder');
+      }
+
+      setReminderMessage('Reminder completed');
+      refreshWorkspace(selectedAccountId);
+    } catch (error) {
+      setReminderError(error instanceof Error ? error.message : 'Unable to complete reminder');
+    }
+  }
+
   return (
     <main className="crm-page">
       <div className="crm-backdrop" />
@@ -438,6 +525,12 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           <div className="topbar-actions" aria-label="Top bar actions">
             <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
               {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
+            </button>
+            <button className="ghost-button" type="button" onClick={() => setIsReminderModalOpen(true)}>
+              Set reminder
+            </button>
+            <button className="ghost-button" type="button" onClick={handleCompleteReminder}>
+              Complete reminder
             </button>
             <button className="ghost-button" type="button">New note</button>
             <button
@@ -571,6 +664,12 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                               {badge.label}
                             </span>
                           ))}
+                          {account.reminderLabel && account.reminderTone ? (
+                            <ReminderBadge
+                              label={account.reminderLabel}
+                              tone={account.reminderTone === 'danger' ? 'danger' : account.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                            />
+                          ) : null}
                         </div>
                       </Link>
                     );
@@ -619,6 +718,12 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                             {badge.label}
                           </span>
                         ))}
+                        {item.reminderLabel && item.reminderTone ? (
+                          <ReminderBadge
+                            label={item.reminderLabel}
+                            tone={item.reminderTone === 'danger' ? 'danger' : item.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                          />
+                        ) : null}
                       </div>
                     </Link>
                   );
@@ -659,7 +764,15 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                           {badge.label}
                         </span>
                       ))}
+                      {workspace.accountDetails.account.reminderLabel && workspace.accountDetails.account.reminderTone ? (
+                        <ReminderBadge
+                          label={workspace.accountDetails.account.reminderLabel}
+                          tone={workspace.accountDetails.account.reminderTone === 'danger' ? 'danger' : workspace.accountDetails.account.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                        />
+                      ) : null}
                     </div>
+                    {reminderMessage ? <p className="generated-draft-preview">{reminderMessage}</p> : null}
+                    {reminderError ? <p className="generated-draft-error">{reminderError}</p> : null}
                     <dl className="contact-facts">
                       <div>
                         <dt>Stakeholders</dt>
@@ -875,7 +988,15 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                         {badge.label}
                       </span>
                     ))}
+                    {workspace.details.contact.reminderLabel && workspace.details.contact.reminderTone ? (
+                      <ReminderBadge
+                        label={workspace.details.contact.reminderLabel}
+                        tone={workspace.details.contact.reminderTone === 'danger' ? 'danger' : workspace.details.contact.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                      />
+                    ) : null}
                   </div>
+                  {reminderMessage ? <p className="generated-draft-preview">{reminderMessage}</p> : null}
+                  {reminderError ? <p className="generated-draft-error">{reminderError}</p> : null}
                   <dl className="contact-facts">
                     <div>
                       <dt>Relationship</dt>
@@ -1220,6 +1341,12 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           setIsBulkModalOpen(false);
           clearConversationSelection();
         }}
+      />
+      <ReminderModal
+        open={isReminderModalOpen}
+        title={isAccountsMode ? 'Set account reminder' : 'Set contact reminder'}
+        onClose={() => setIsReminderModalOpen(false)}
+        onSubmit={handleSaveReminder}
       />
     </main>
   );

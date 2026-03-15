@@ -201,7 +201,8 @@ a {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -230,6 +231,58 @@ button {
   position: relative;
   display: grid;
   gap: 18px;
+}
+
+.crm-reminder-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.crm-reminder-badge--neutral {
+  background: rgba(111, 98, 87, 0.12);
+  border-color: rgba(111, 98, 87, 0.18);
+  color: var(--muted);
+}
+
+.crm-reminder-badge--warning {
+  background: rgba(191, 87, 0, 0.12);
+  border-color: rgba(191, 87, 0, 0.2);
+  color: #8a4b00;
+}
+
+.crm-reminder-badge--danger {
+  background: rgba(166, 43, 43, 0.12);
+  border-color: rgba(166, 43, 43, 0.2);
+  color: #8f1d1d;
+}
+
+.crm-reminder-badge--success {
+  background: rgba(15, 118, 110, 0.12);
+  border-color: rgba(15, 118, 110, 0.2);
+  color: #0f766e;
+}
+
+.crm-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(31, 26, 23, 0.28);
+}
+
+.crm-modal {
+  width: min(560px, 100%);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  background: var(--panel-strong);
+  box-shadow: 0 24px 60px rgba(31, 26, 23, 0.18);
 }
 
 .topbar {

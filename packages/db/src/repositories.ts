@@ -1,17 +1,20 @@
 import { sql } from 'drizzle-orm';
 import type { NodeDatabaseClient, NodeSqliteConnection } from './server/node-sqlite';
-import { accountAliases, accounts, contacts, drafts } from './schema';
+import { accountAliases, accounts, contacts, drafts, reminders } from './schema';
 import type {
   AccountDetailDto,
   AccountSummaryDto,
   AssignContactsToAccountInput,
+  CreateReminderInput,
   JobType,
   MergeAccountsInput,
+  ReminderDto,
   RelationshipStatus,
   RestoreWorkspaceInput,
   SendStatus,
   SettingKey,
   SettingValueDto,
+  UpdateReminderInput,
   WorkspaceBackupSnapshotDto
 } from '@mycrm/core';
 import { redactObject } from '@mycrm/core';
@@ -77,6 +80,15 @@ function normalizeWorkspaceRow(
     account_aliases: {
       accountId: 'account_id',
       createdAt: 'created_at'
+    },
+    reminders: {
+      entityType: 'entity_type',
+      entityId: 'entity_id',
+      ruleType: 'rule_type',
+      dueAt: 'due_at',
+      completedAt: 'completed_at',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
     },
     contacts: {
       profileUrl: 'profile_url',
@@ -335,6 +347,61 @@ function createAccountId() {
 
 function createAccountAliasId() {
   return `account-alias-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function createReminderId() {
+  return `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function deriveReminderStatus(dueAt: number, completedAt: number | null, now = Date.now()): ReminderDto['status'] {
+  if (completedAt) {
+    return 'completed';
+  }
+
+  const current = new Date(now);
+  const startOfToday = new Date(current.getFullYear(), current.getMonth(), current.getDate()).getTime();
+  const startOfTomorrow = startOfToday + 24 * 60 * 60 * 1000;
+  const startOfDayAfterTomorrow = startOfTomorrow + 24 * 60 * 60 * 1000;
+
+  if (dueAt < startOfToday) {
+    return 'overdue';
+  }
+
+  if (dueAt < startOfTomorrow) {
+    return 'due_today';
+  }
+
+  if (dueAt < startOfDayAfterTomorrow) {
+    return 'due_tomorrow';
+  }
+
+  return 'none';
+}
+
+function mapReminderRow(row: {
+  id: string;
+  entity_type: ReminderDto['entityType'];
+  entity_id: string;
+  status: ReminderDto['status'];
+  rule_type: ReminderDto['ruleType'];
+  due_at: number;
+  completed_at: number | null;
+  note: string | null;
+  created_at: number;
+  updated_at: number;
+}): ReminderDto {
+  return {
+    id: row.id,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    status: row.status,
+    ruleType: row.rule_type,
+    dueAt: row.due_at,
+    completedAt: row.completed_at,
+    note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }
 
 export function createAccountRepository(db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
@@ -632,6 +699,171 @@ export function createAccountRepository(db: RepositoryDbClient, sqlite: Reposito
       });
 
       return this.findAccountById(input.targetAccountId);
+    }
+  };
+}
+
+export function createReminderRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
+  return {
+    async listReminders(args?: { entityType?: ReminderDto['entityType']; entityId?: string }) {
+      const clauses: string[] = [];
+
+      if (args?.entityType) {
+        clauses.push(`entity_type = '${args.entityType.replace(/'/g, "''")}'`);
+      }
+
+      if (args?.entityId) {
+        clauses.push(`entity_id = '${args.entityId.replace(/'/g, "''")}'`);
+      }
+
+      const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
+      const rows = await sqlite.all<{
+        id: string;
+        entity_type: ReminderDto['entityType'];
+        entity_id: string;
+        status: ReminderDto['status'];
+        rule_type: ReminderDto['ruleType'];
+        due_at: number;
+        completed_at: number | null;
+        note: string | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT id, entity_type, entity_id, status, rule_type, due_at, completed_at, note, created_at, updated_at
+        FROM reminders
+        ${whereClause}
+        ORDER BY due_at ASC, created_at DESC
+      `);
+
+      return rows.map(mapReminderRow);
+    },
+
+    async findReminderById(reminderId: string) {
+      const safeReminderId = reminderId.replace(/'/g, "''");
+      const [row] = await sqlite.all<{
+        id: string;
+        entity_type: ReminderDto['entityType'];
+        entity_id: string;
+        status: ReminderDto['status'];
+        rule_type: ReminderDto['ruleType'];
+        due_at: number;
+        completed_at: number | null;
+        note: string | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT id, entity_type, entity_id, status, rule_type, due_at, completed_at, note, created_at, updated_at
+        FROM reminders
+        WHERE id = '${safeReminderId}'
+        LIMIT 1
+      `);
+
+      return row ? mapReminderRow(row) : null;
+    },
+
+    async findActiveReminder(entityType: ReminderDto['entityType'], entityId: string) {
+      const safeEntityType = entityType.replace(/'/g, "''");
+      const safeEntityId = entityId.replace(/'/g, "''");
+      const [row] = await sqlite.all<{
+        id: string;
+        entity_type: ReminderDto['entityType'];
+        entity_id: string;
+        status: ReminderDto['status'];
+        rule_type: ReminderDto['ruleType'];
+        due_at: number;
+        completed_at: number | null;
+        note: string | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT id, entity_type, entity_id, status, rule_type, due_at, completed_at, note, created_at, updated_at
+        FROM reminders
+        WHERE entity_type = '${safeEntityType}'
+          AND entity_id = '${safeEntityId}'
+          AND completed_at IS NULL
+        ORDER BY due_at ASC, created_at DESC
+        LIMIT 1
+      `);
+
+      return row ? mapReminderRow(row) : null;
+    },
+
+    async upsertReminder(input: CreateReminderInput) {
+      const existing = await this.findActiveReminder(input.entityType, input.entityId);
+      const now = Date.now();
+      const status = deriveReminderStatus(input.dueAt, null, now);
+      const safeEntityType = input.entityType.replace(/'/g, "''");
+      const safeEntityId = input.entityId.replace(/'/g, "''");
+      const safeRuleType = input.ruleType.replace(/'/g, "''");
+      const safeNote = (input.note || '').replace(/'/g, "''");
+
+      if (existing) {
+        await sqlite.exec(`
+          UPDATE reminders
+          SET status = '${status}',
+              rule_type = '${safeRuleType}',
+              due_at = ${input.dueAt},
+              completed_at = NULL,
+              note = ${safeNote ? `'${safeNote}'` : 'NULL'},
+              updated_at = ${now}
+          WHERE id = '${existing.id.replace(/'/g, "''")}'
+        `);
+
+        if (input.entityType === 'contact') {
+          await sqlite.exec(`UPDATE contacts SET next_reminder_at = ${input.dueAt}, updated_at = ${now} WHERE id = '${safeEntityId}'`);
+        }
+
+        return this.findReminderById(existing.id);
+      }
+
+      const reminderId = createReminderId();
+      await sqlite.exec(`
+        INSERT INTO reminders (
+          id, entity_type, entity_id, status, rule_type, due_at, completed_at, note, created_at, updated_at
+        ) VALUES (
+          '${reminderId}', '${safeEntityType}', '${safeEntityId}', '${status}', '${safeRuleType}', ${input.dueAt}, NULL,
+          ${safeNote ? `'${safeNote}'` : 'NULL'}, ${now}, ${now}
+        )
+      `);
+
+      if (input.entityType === 'contact') {
+        await sqlite.exec(`UPDATE contacts SET next_reminder_at = ${input.dueAt}, updated_at = ${now} WHERE id = '${safeEntityId}'`);
+      }
+
+      return this.findReminderById(reminderId);
+    },
+
+    async updateReminder(reminderId: string, input: UpdateReminderInput) {
+      const existing = await this.findReminderById(reminderId);
+      if (!existing) {
+        return null;
+      }
+
+      const now = Date.now();
+      const dueAt = input.dueAt ?? existing.dueAt;
+      const completedAt = input.completedAt === undefined ? existing.completedAt : input.completedAt;
+      const note = input.note === undefined ? existing.note : input.note;
+      const status = input.status ?? deriveReminderStatus(dueAt, completedAt, now);
+      const safeReminderId = reminderId.replace(/'/g, "''");
+      const safeNote = (note || '').replace(/'/g, "''");
+
+      await sqlite.exec(`
+        UPDATE reminders
+        SET status = '${status}',
+            due_at = ${dueAt},
+            completed_at = ${completedAt === null ? 'NULL' : completedAt},
+            note = ${safeNote ? `'${safeNote}'` : 'NULL'},
+            updated_at = ${now}
+        WHERE id = '${safeReminderId}'
+      `);
+
+      if (existing.entityType === 'contact') {
+        await sqlite.exec(
+          `UPDATE contacts SET next_reminder_at = ${completedAt ? 'NULL' : dueAt}, updated_at = ${now} WHERE id = '${existing.entityId.replace(/'/g, "''")}'`
+        );
+      }
+
+      return this.findReminderById(reminderId);
     }
   };
 }
@@ -1543,6 +1775,7 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
         data: {
           accounts: await listTableRows(sqlite, 'accounts'),
           accountAliases: await listTableRows(sqlite, 'account_aliases'),
+          reminders: await listTableRows(sqlite, 'reminders'),
           contacts: await listTableRows(sqlite, 'contacts'),
           conversations: await listTableRows(sqlite, 'conversations'),
           messages: await listTableRows(sqlite, 'messages'),
@@ -1564,11 +1797,13 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
         await sqlite.exec('DELETE FROM contacts');
         await sqlite.exec('DELETE FROM account_aliases');
         await sqlite.exec('DELETE FROM accounts');
+        await sqlite.exec('DELETE FROM reminders');
         await sqlite.exec('DELETE FROM jobs');
         await sqlite.exec('DELETE FROM sync_runs');
         await sqlite.exec('DELETE FROM audit_log');
 
         await replaceTableRows(sqlite, 'accounts', args.data.accounts);
+        await replaceTableRows(sqlite, 'reminders', args.data.reminders);
         await replaceTableRows(sqlite, 'contacts', args.data.contacts);
         await replaceTableRows(sqlite, 'account_aliases', args.data.accountAliases);
         await replaceTableRows(sqlite, 'conversations', args.data.conversations);
@@ -1583,6 +1818,7 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
       } else {
         await upsertTableRows(sqlite, 'accounts', args.data.accounts);
         await upsertTableRows(sqlite, 'account_aliases', args.data.accountAliases);
+        await upsertTableRows(sqlite, 'reminders', args.data.reminders);
         await upsertTableRows(sqlite, 'contacts', args.data.contacts);
         await upsertTableRows(sqlite, 'conversations', args.data.conversations);
         await upsertTableRows(sqlite, 'messages', args.data.messages);

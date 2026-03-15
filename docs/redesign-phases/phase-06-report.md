@@ -1,0 +1,8 @@
+# Phase 06 Report
+
+- Scope completed: added reminder entities, repository lifecycle, API routes, modal and badge UI, and reminder visibility/actions in the CRM workspace for contact reminders with account-facing UI hooks.
+- Main files changed: `packages/core/src/statuses.ts`, `packages/core/src/dto.ts`, `packages/db/src/schema.ts`, `packages/db/src/repositories.ts`, `packages/db/drizzle/0000_phase1.sql`, `packages/db/src/schema.integration.test.ts`, `apps/web/lib/services/reminders-service.ts`, `apps/web/app/api/reminders/route.ts`, `apps/web/app/api/reminders/[reminderId]/route.ts`, `apps/web/components/crm/modals/reminder-modal.tsx`, `apps/web/components/crm/shared/reminder-badge.tsx`, `apps/web/lib/crm-shell.ts`, `apps/web/components/crm/inbox/inbox-workspace.tsx`, `apps/web/app/globals.css`.
+- Validation run: `pnpm --filter @mycrm/db typecheck`, `pnpm --filter @mycrm/web typecheck`, `pnpm exec vitest run src/schema.integration.test.ts -t "creates and completes reminders while syncing contact next reminder state"`, `pnpm exec vitest run app/api/reminders/route.test.ts "app/api/reminders/[reminderId]/route.test.ts"`.
+- Known limitations left for later phases: account and campaign reminders do not yet have dedicated repository-backed read models in the shell; no Playwright reminder E2E coverage was added in this phase; v1 keeps one active reminder per entity.
+- Migration or compatibility notes: contact reminders stay synchronized with `contacts.next_reminder_at` to preserve existing follow-up queue behavior; the static SQL bootstrap migration was updated to include `reminders` so integration tests and fresh SQLite databases stay aligned.
+- Commit: `phase-06: add reminders`

@@ -2,6 +2,9 @@ import {
   draftStatuses,
   jobStatuses,
   jobTypes,
+  reminderEntityTypes,
+  reminderRuleTypes,
+  reminderStatuses,
   relationshipStatuses,
   sendStatuses,
   syncRunStatuses
@@ -77,6 +80,25 @@ export const contacts = sqliteTable(
     uniqueIndex('contacts_linkedin_profile_id_idx').on(table.linkedinProfileId),
     index('contacts_relationship_status_idx').on(table.relationshipStatus),
     index('contacts_last_interaction_at_idx').on(table.lastInteractionAt)
+  ]
+);
+
+export const reminders = sqliteTable(
+  'reminders',
+  {
+    id: text('id').primaryKey(),
+    entityType: text('entity_type', { enum: reminderEntityTypes }).notNull(),
+    entityId: text('entity_id').notNull(),
+    status: text('status', { enum: reminderStatuses }).notNull().default('due_today'),
+    ruleType: text('rule_type', { enum: reminderRuleTypes }).notNull().default('manual'),
+    dueAt: integer('due_at').notNull(),
+    completedAt: integer('completed_at'),
+    note: text('note'),
+    ...timestamps
+  },
+  (table) => [
+    index('reminders_entity_idx').on(table.entityType, table.entityId),
+    index('reminders_status_due_at_idx').on(table.status, table.dueAt)
   ]
 );
 
