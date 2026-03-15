@@ -12,7 +12,9 @@ test('loads the CRM shell smoke flow', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Flags and actions' })).toBeVisible();
   await expect(page.getByText('Sync History')).toBeVisible();
   await expect(page.getByLabel('Workspace settings')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Sync Conversations' })).toBeVisible();
+  await expect(
+    page.getByLabel('Top bar actions').getByRole('button', { name: 'Sync Conversations' })
+  ).toBeVisible();
 });
 
 test('saves settings and exports a backup snapshot', async ({ page }) => {
@@ -33,7 +35,7 @@ test('saves settings and exports a backup snapshot', async ({ page }) => {
 test('queues manual sync and approved draft send', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'Sync Conversations' }).click();
+  await page.getByLabel('Top bar actions').getByRole('button', { name: 'Sync Conversations' }).click();
   await expect(page.getByText(/Manual sync queued:/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Send Message' }).first().click();

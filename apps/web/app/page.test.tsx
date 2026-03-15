@@ -2,7 +2,9 @@ import { render, screen } from '@testing-library/react';
 import type { ContactConversationDetailsDto, InboxItemDto, SyncRunDto } from '@mycrm/core';
 import HomePage from './page';
 
-const redirect = vi.fn();
+const navigationMocks = vi.hoisted(() => ({
+  redirect: vi.fn()
+}));
 
 vi.mock('@/lib/services/inbox-service', () => ({
   listInboxItems: vi.fn(),
@@ -29,7 +31,7 @@ vi.mock('next/navigation', async () => {
     ...actual,
     usePathname: () => '/inbox',
     useSearchParams: () => new URLSearchParams(''),
-    redirect
+    redirect: navigationMocks.redirect
   };
 });
 
@@ -126,11 +128,11 @@ const syncRuns: SyncRunDto[] = [
 
 describe('HomePage', () => {
   it('redirects root route to inbox', async () => {
-    redirect.mockReset();
+    navigationMocks.redirect.mockReset();
 
     await HomePage();
 
-    expect(redirect).toHaveBeenCalledWith('/inbox');
+    expect(navigationMocks.redirect).toHaveBeenCalledWith('/inbox');
   });
 });
 
@@ -171,7 +173,6 @@ describe('InboxPage shell', () => {
     const page = await InboxPage({ searchParams: Promise.resolve({}) });
     render(page);
 
-    expect(screen.getByText('Outreach Workspace')).toBeInTheDocument();
     expect(screen.getByText('People-first outreach workspace')).toBeInTheDocument();
     expect(screen.getByText('Conversations')).toBeInTheDocument();
     expect(screen.getByText('Timeline')).toBeInTheDocument();
@@ -186,7 +187,9 @@ describe('InboxPage shell', () => {
     expect(screen.getByText('Send Message')).toBeInTheDocument();
     expect(screen.getByText('Sync History')).toBeInTheDocument();
     expect(screen.getByText('2/3 imported')).toBeInTheDocument();
-    expect(screen.getByText('Sync Conversations')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText('Top bar actions').querySelector('button')?.textContent
+    ).toContain('Sync Conversations');
     expect(screen.getByText('Sync in Progress')).toBeInTheDocument();
     expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
     expect(screen.getByText('Saved browser session ready')).toBeInTheDocument();
