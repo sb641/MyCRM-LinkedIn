@@ -524,6 +524,71 @@ button {
   box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.2);
 }
 
+.conversation-row-selectable {
+  align-items: center;
+}
+
+.conversation-select-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+.bulk-draft-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(31, 26, 23, 0.38);
+  backdrop-filter: blur(8px);
+  z-index: 40;
+}
+
+.bulk-draft-modal {
+  width: min(860px, 100%);
+  display: grid;
+  gap: 16px;
+}
+
+.bulk-draft-selection-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.bulk-draft-selection-item {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid rgba(217, 205, 189, 0.8);
+  border-radius: 16px;
+  background: rgba(255, 250, 242, 0.8);
+}
+
+.bulk-draft-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.bulk-draft-options {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid rgba(217, 205, 189, 0.8);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.bulk-draft-options label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .conversation-meta,
 .conversation-preview,
 .stack-copy,

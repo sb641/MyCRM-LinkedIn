@@ -93,6 +93,28 @@ export const generateDraftInputSchema = z.object({
   goal: z.string().min(1).max(500)
 });
 
+export const bulkDraftGenerationOptionsSchema = z.object({
+  includeLink: z.string().max(500).optional().default(''),
+  callToAction: z.string().max(280).optional().default(''),
+  tone: z.string().max(120).optional().default(''),
+  constraints: z.string().max(1000).optional().default(''),
+  useRecentConversationContext: z.boolean().default(true),
+  useAccountContext: z.boolean().default(true),
+  varyMessageByRole: z.boolean().default(true),
+  avoidRepeatingAngleWithinAccount: z.boolean().default(true)
+});
+
+export const bulkGenerateDraftInputSchema = z.object({
+  selections: z.array(
+    z.object({
+      contactId: z.string().min(1),
+      conversationId: z.string().min(1)
+    })
+  ).min(1),
+  goal: z.string().min(1).max(500),
+  options: bulkDraftGenerationOptionsSchema
+});
+
 export const generatedDraftVariantSchema = z.object({
   id: z.string().min(1),
   text: z.string().min(1),
@@ -108,6 +130,20 @@ export const generatedDraftResultSchema = z.object({
   draftStatus: draftStatusSchema,
   modelName: z.string().min(1),
   variants: z.array(generatedDraftVariantSchema).min(1)
+});
+
+export const bulkGeneratedDraftItemSchema = z.object({
+  contactId: z.string().min(1),
+  conversationId: z.string().min(1),
+  draft: generatedDraftResultSchema
+});
+
+export const bulkGeneratedDraftResultSchema = z.object({
+  requestedCount: z.number().int().positive(),
+  generatedCount: z.number().int().nonnegative(),
+  drafts: z.array(bulkGeneratedDraftItemSchema),
+  goal: z.string().min(1),
+  options: bulkDraftGenerationOptionsSchema
 });
 
 export const jobDtoSchema = z.object({

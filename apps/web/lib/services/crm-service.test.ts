@@ -6,7 +6,7 @@ import { NotFoundError, ValidationError } from '@mycrm/core';
 import { createDb } from '@mycrm/db';
 import { runMigrations } from '../../../../packages/db/src/migrate';
 import { seedDatabase } from '../../../../packages/db/src/seed';
-import { approveDraft, queueApprovedDraftSend, updateContactRelationshipStatus } from './crm-service';
+import { approveDraft, generateDraftsBulk, queueApprovedDraftSend, updateContactRelationshipStatus } from './crm-service';
 
 function createTempDbUrl(name: string) {
   const filePath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mycrm-phase2-write-')), `${name}.sqlite`);
@@ -118,6 +118,39 @@ describe('crm service', () => {
     expect(second.jobId).toBe(first.jobId);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe('queued');
+  });
+
+  it('generates drafts in bulk by orchestrating repeated single-contact generation', async () => {
+    const databaseUrl = createTempDbUrl('bulk-generate');
+    await runMigrations(databaseUrl);
+    await seedDatabase(databaseUrl);
+
+    const result = await generateDraftsBulk(
+      {
+        selections: [
+          { contactId: 'contact-001', conversationId: 'conversation-001' },
+          { contactId: 'contact-002', conversationId: 'conversation-002' }
+        ],
+        goal: 'Book a short intro call',
+        options: {
+          includeLink: 'https://example.com/brief',
+          callToAction: 'Reply with a time next week',
+          tone: 'Concise and warm',
+          constraints: 'Keep it under 80 words',
+          useRecentConversationContext: true,
+          useAccountContext: true,
+          varyMessageByRole: true,
+          avoidRepeatingAngleWithinAccount: true
+        }
+      },
+      databaseUrl
+    );
+
+    expect(result.requestedCount).toBe(2);
+    expect(result.generatedCount).toBe(2);
+    expect(result.drafts).toHaveLength(2);
+    expect(result.drafts[0]?.draft.goalText).toContain('Book a short intro call');
+    expect(result.drafts[0]?.draft.goalText).toContain('Reply with a time next week');
   });
 
 });

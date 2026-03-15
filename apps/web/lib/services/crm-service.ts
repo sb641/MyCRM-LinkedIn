@@ -1,8 +1,10 @@
 import {
   approveDraftInputSchema,
+  bulkGenerateDraftInputSchema,
+  bulkGeneratedDraftResultSchema,
   type DraftSummaryDto,
-  generateDraftInputSchema,
   type GeneratedDraftResultDto,
+  generateDraftInputSchema,
   generatedDraftResultSchema,
   enqueueJobResultSchema,
   mutationResultSchema,
@@ -91,6 +93,55 @@ export async function generateDraft(input: unknown, _databaseUrl?: string): Prom
   }
 
   return generatedDraftResultSchema.parse(saved);
+}
+
+export async function generateDraftsBulk(input: unknown, _databaseUrl?: string) {
+  const parsed = bulkGenerateDraftInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError('Invalid bulk draft generation payload', parsed.error.flatten());
+  }
+
+  const goalSuffixParts = [
+    parsed.data.options.includeLink ? `Include this link when relevant: ${parsed.data.options.includeLink}` : null,
+    parsed.data.options.callToAction ? `Call to action: ${parsed.data.options.callToAction}` : null,
+    parsed.data.options.tone ? `Tone: ${parsed.data.options.tone}` : null,
+    parsed.data.options.constraints ? `Constraints: ${parsed.data.options.constraints}` : null,
+    parsed.data.options.useRecentConversationContext ? 'Use recent conversation context.' : 'Do not use recent conversation context.',
+    parsed.data.options.useAccountContext ? 'Use account context.' : 'Do not use account context.',
+    parsed.data.options.varyMessageByRole ? 'Vary the message by role.' : 'Do not vary the message by role.',
+    parsed.data.options.avoidRepeatingAngleWithinAccount
+      ? 'Avoid repeating the same angle within the same account.'
+      : 'Angle repetition within the same account is allowed.'
+  ].filter(Boolean);
+
+  const composedGoal = [parsed.data.goal, ...goalSuffixParts].join('\n');
+  const drafts: Array<{
+    contactId: string;
+    conversationId: string;
+    draft: GeneratedDraftResultDto;
+  }> = [];
+
+  for (const selection of parsed.data.selections) {
+    const draft = await generateDraft({
+      contactId: selection.contactId,
+      conversationId: selection.conversationId,
+      goal: composedGoal
+    });
+
+    drafts.push({
+      contactId: selection.contactId,
+      conversationId: selection.conversationId,
+      draft
+    });
+  }
+
+  return bulkGeneratedDraftResultSchema.parse({
+    requestedCount: parsed.data.selections.length,
+    generatedCount: drafts.length,
+    drafts,
+    goal: parsed.data.goal,
+    options: parsed.data.options
+  });
 }
 
 export async function queueApprovedDraftSend(input: unknown, _databaseUrl?: string) {

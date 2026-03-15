@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import type { ShellDataState } from '@/lib/crm-shell';
+import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
 import type { InboxWorkspaceViewModel } from '@/lib/view-models/inbox';
 
 const WORKSPACE_REPLACE_CONFIRMATION = 'REPLACE WORKSPACE';
@@ -30,6 +31,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [generatedDraft, setGeneratedDraft] = useState<string | null>(null);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<string[]>([]);
+  const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
+  const [bulkGenerationMessage, setBulkGenerationMessage] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -84,6 +88,27 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       setIsGenerating(false);
     }
   }
+
+  function toggleConversationSelection(conversationId: string) {
+    setSelectedConversationIds((current) =>
+      current.includes(conversationId)
+        ? current.filter((item) => item !== conversationId)
+        : [...current, conversationId]
+    );
+  }
+
+  function clearConversationSelection() {
+    setSelectedConversationIds([]);
+  }
+
+  const selectedPeople: BulkDraftSelection[] = workspace.visibleItems
+    .filter((item) => selectedConversationIds.includes(item.conversationId))
+    .map((item) => ({
+      contactId: item.contactId,
+      conversationId: item.conversationId,
+      contactName: item.contactName,
+      company: item.company ?? null
+    }));
 
   async function handleManualSync() {
     const accountId = syncAccountId.trim() || defaultAccountId;
@@ -273,6 +298,14 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
             </button>
             <button className="ghost-button" type="button">New note</button>
+            <button
+              className="ghost-button"
+              type="button"
+              onClick={() => setIsBulkModalOpen(true)}
+              disabled={selectedPeople.length === 0}
+            >
+              {selectedPeople.length > 0 ? `Bulk Generate (${selectedPeople.length})` : 'Bulk Generate'}
+            </button>
             <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!workspace.details || isGenerating}>
               {isGenerating ? 'Generating draft...' : 'Generate Draft'}
             </button>
@@ -350,6 +383,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               <div className="panel-header-actions">
                 <span className="subtle-pill">Visible {workspace.summary.visibleConversations}</span>
                 <span className="count-pill">{workspace.summary.totalConversations}</span>
+                {selectedPeople.length > 0 ? (
+                  <button className="ghost-button" type="button" onClick={clearConversationSelection}>
+                    Clear selection
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -377,7 +415,15 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                       }}
                       className={isActive ? 'conversation-card active' : 'conversation-card'}
                     >
-                      <div className="conversation-row">
+                      <div className="conversation-row conversation-row-selectable">
+                        <label className="conversation-select-toggle" onClick={(event) => event.preventDefault()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedConversationIds.includes(item.conversationId)}
+                            onChange={() => toggleConversationSelection(item.conversationId)}
+                            aria-label={`Select ${item.contactName}`}
+                          />
+                        </label>
                         <strong>{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
                         <span className="subtle-pill">{item.relativeLastMessage}</span>
                       </div>
@@ -523,6 +569,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                     )}
                     {sendMessage ? <p className="generated-draft-preview">{sendMessage}</p> : null}
                     {sendError ? <p className="generated-draft-error">{sendError}</p> : null}
+                    {bulkGenerationMessage ? <p className="generated-draft-preview">{bulkGenerationMessage}</p> : null}
                   </section>
                 </div>
               </div>
@@ -761,6 +808,16 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           </aside>
         </div>
       </div>
+      <BulkDraftModal
+        isOpen={isBulkModalOpen}
+        selections={selectedPeople}
+        onClose={() => setIsBulkModalOpen(false)}
+        onSuccess={(message) => {
+          setBulkGenerationMessage(message);
+          setIsBulkModalOpen(false);
+          clearConversationSelection();
+        }}
+      />
     </main>
   );
 }
