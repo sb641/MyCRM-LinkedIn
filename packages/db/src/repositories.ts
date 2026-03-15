@@ -53,11 +53,17 @@ async function clearSecretStore() {
   }
 }
 
-async function listTableRows<T extends Record<string, unknown>>(sqlite: RepositorySqliteConnection, tableName: string) {
+async function listTableRows<T extends Record<string, unknown>>(
+  sqlite: RepositorySqliteConnection,
+  tableName: string
+) {
   return sqlite.all<T>(`SELECT * FROM ${tableName}`);
 }
 
-function normalizeWorkspaceRow(tableName: string, row: Record<string, unknown>) {
+function normalizeWorkspaceRow(
+  tableName: string,
+  row: Record<string, unknown>
+) {
   const columnMap: Record<string, Record<string, string>> = {
     contacts: {
       profileUrl: 'profile_url',

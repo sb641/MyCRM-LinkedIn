@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { NotFoundError, ValidationError } from '@mycrm/core';
-import { createDb } from '@mycrm/db';
+import { createNodeDb } from '@mycrm/db/server';
 import { runMigrations } from '../../../../packages/db/src/migrate';
 import { seedDatabase } from '../../../../packages/db/src/seed';
 import { approveDraft, generateDraftsBulk, queueApprovedDraftSend, updateContactRelationshipStatus } from './crm-service';
@@ -20,7 +20,7 @@ describe('crm service', () => {
     await seedDatabase(databaseUrl);
 
     const result = await updateContactRelationshipStatus('contact-001', { relationshipStatus: 'archived' }, databaseUrl);
-    const { sqlite } = await createDb(databaseUrl);
+  const { sqlite } = await createNodeDb(databaseUrl);
     const [row] = await sqlite.all<{ relationship_status: string }>("SELECT relationship_status FROM contacts WHERE id = 'contact-001'");
     await sqlite.close();
 
@@ -34,7 +34,7 @@ describe('crm service', () => {
     await seedDatabase(databaseUrl);
 
     const result = await approveDraft('draft-002', { approvedText: 'Approved manually', sendStatus: 'queued' }, databaseUrl);
-    const { sqlite } = await createDb(databaseUrl);
+    const { sqlite } = await createNodeDb(databaseUrl);
     const [row] = await sqlite.all<{ draft_status: string; approved_text: string; send_status: string }>(
       "SELECT draft_status, approved_text, send_status FROM drafts WHERE id = 'draft-002'"
     );
@@ -72,7 +72,7 @@ describe('crm service', () => {
       },
       databaseUrl
     );
-    const { sqlite } = await createDb(databaseUrl);
+    const { sqlite } = await createNodeDb(databaseUrl);
     const [row] = await sqlite.all<{ type: string; payload: string; status: string }>(
       "SELECT type, payload, status FROM jobs WHERE id = '" + result.jobId + "'"
     );
@@ -109,7 +109,7 @@ describe('crm service', () => {
       databaseUrl
     );
 
-    const { sqlite } = await createDb(databaseUrl);
+    const { sqlite } = await createNodeDb(databaseUrl);
     const rows = await sqlite.all<{ id: string; status: string }>(
       "SELECT id, status FROM jobs WHERE type = 'send_message' AND json_extract(payload, '$.draftId') = 'draft-003' ORDER BY created_at ASC"
     );

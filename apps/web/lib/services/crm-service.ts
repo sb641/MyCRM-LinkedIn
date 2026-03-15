@@ -14,19 +14,34 @@ import {
   ValidationError
 } from '@mycrm/core';
 import { createAiAdapter, createPromptBuilder } from '@mycrm/ai';
-import { createJobRepository, createMutationRepository, getDb } from '@mycrm/db/server';
+import { createJobRepository, createMutationRepository, createNodeDb, getDb } from '@mycrm/db/server';
+
+let generatedDraftSequence = 0;
+
+function createGeneratedDraftId(contactId: string, conversationId: string) {
+  generatedDraftSequence += 1;
+  return `draft-generated-${Date.now()}-${generatedDraftSequence}-${contactId}-${conversationId}`;
+}
+
+async function getServiceDb(databaseUrl?: string) {
+  if (databaseUrl) {
+    return createNodeDb(databaseUrl);
+  }
+
+  return getDb();
+}
 
 export async function updateContactRelationshipStatus(
   contactId: string,
   input: unknown,
-  _databaseUrl?: string
+  databaseUrl?: string
 ) {
   const parsed = updateRelationshipStatusInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new ValidationError('Invalid relationship status payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
   const repository = createMutationRepository(db, sqlite);
   const updated = await repository.updateRelationshipStatus(contactId, parsed.data.relationshipStatus);
 
@@ -37,13 +52,13 @@ export async function updateContactRelationshipStatus(
   return mutationResultSchema.parse({ success: true });
 }
 
-export async function approveDraft(draftId: string, input: unknown, _databaseUrl?: string) {
+export async function approveDraft(draftId: string, input: unknown, databaseUrl?: string) {
   const parsed = approveDraftInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new ValidationError('Invalid draft approval payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
   const repository = createMutationRepository(db, sqlite);
   const updated = await repository.approveDraft(draftId, parsed.data.approvedText, parsed.data.sendStatus);
 
@@ -54,13 +69,13 @@ export async function approveDraft(draftId: string, input: unknown, _databaseUrl
   return mutationResultSchema.parse({ success: true });
 }
 
-export async function generateDraft(input: unknown, _databaseUrl?: string): Promise<GeneratedDraftResultDto> {
+export async function generateDraft(input: unknown, databaseUrl?: string): Promise<GeneratedDraftResultDto> {
   const parsed = generateDraftInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new ValidationError('Invalid draft generation payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
   const repository = createMutationRepository(db, sqlite);
   const promptBuilder = createPromptBuilder();
   const aiAdapter = createAiAdapter();
@@ -73,7 +88,7 @@ export async function generateDraft(input: unknown, _databaseUrl?: string): Prom
   });
 
   const variants = await aiAdapter.generateDrafts(prompt);
-  const draftId = `draft-generated-${Date.now()}`;
+  const draftId = createGeneratedDraftId(parsed.data.contactId, parsed.data.conversationId);
   const saved = await repository.createGeneratedDraft({
     draftId,
     contactId: parsed.data.contactId,
@@ -81,7 +96,7 @@ export async function generateDraft(input: unknown, _databaseUrl?: string): Prom
     goalText: parsed.data.goal,
     modelName: 'mock-gemini',
     variants: variants.map((variant: { id?: string; text: string; score?: number | null }, index: number) => ({
-      id: variant.id ?? `${draftId}-variant-${index + 1}`,
+      id: `${draftId}-variant-${index + 1}`,
       text: variant.text,
       selected: index === 0,
       score: variant.score ?? null
@@ -95,7 +110,7 @@ export async function generateDraft(input: unknown, _databaseUrl?: string): Prom
   return generatedDraftResultSchema.parse(saved);
 }
 
-export async function generateDraftsBulk(input: unknown, _databaseUrl?: string) {
+export async function generateDraftsBulk(input: unknown, databaseUrl?: string) {
   const parsed = bulkGenerateDraftInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new ValidationError('Invalid bulk draft generation payload', parsed.error.flatten());
@@ -126,7 +141,7 @@ export async function generateDraftsBulk(input: unknown, _databaseUrl?: string) 
       contactId: selection.contactId,
       conversationId: selection.conversationId,
       goal: composedGoal
-    });
+    }, databaseUrl);
 
     drafts.push({
       contactId: selection.contactId,
@@ -144,13 +159,13 @@ export async function generateDraftsBulk(input: unknown, _databaseUrl?: string) 
   });
 }
 
-export async function queueApprovedDraftSend(input: unknown, _databaseUrl?: string) {
+export async function queueApprovedDraftSend(input: unknown, databaseUrl?: string) {
   const parsed = queueSendRequestSchema.safeParse(input);
   if (!parsed.success) {
     throw new ValidationError('Invalid send queue payload', parsed.error.flatten());
   }
 
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getServiceDb(databaseUrl);
   const mutationRepository = createMutationRepository(db, sqlite);
   const jobRepository = createJobRepository(db, sqlite);
   const draft = await mutationRepository.findDraftForSend(parsed.data.draftId);
