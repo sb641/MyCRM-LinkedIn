@@ -105,6 +105,28 @@ function selectAll<T>(database: DatabaseSync, queryText: string) {
   return database.prepare(queryText).all() as T[];
 }
 
+function hasColumn(database: DatabaseSync, tableName: string, columnName: string) {
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
+  return columns.some((column) => column.name === columnName);
+}
+
+function ensureColumn(database: DatabaseSync, tableName: string, columnName: string, definition: string) {
+  if (!hasColumn(database, tableName, columnName)) {
+    database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
+  }
+}
+
+function ensurePhase02Schema(database: DatabaseSync) {
+  ensureColumn(database, 'contacts', 'account_id', 'TEXT');
+  ensureColumn(database, 'contacts', 'outreach_status', 'TEXT');
+  ensureColumn(database, 'contacts', 'next_reminder_at', 'INTEGER');
+  ensureColumn(database, 'contacts', 'deleted_at', 'INTEGER');
+  ensureColumn(database, 'contacts', 'seniority_bucket', 'TEXT');
+  ensureColumn(database, 'contacts', 'buying_role', 'TEXT');
+  ensureColumn(database, 'conversations', 'deleted_at', 'INTEGER');
+  ensureColumn(database, 'drafts', 'deleted_at', 'INTEGER');
+}
+
 function ensureSchema(database: DatabaseSync) {
   const row = database
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
@@ -113,6 +135,8 @@ function ensureSchema(database: DatabaseSync) {
   if (!row?.name) {
     database.exec(migrationSql);
   }
+
+  ensurePhase02Schema(database);
 }
 
 export async function createNodeSqliteConnection(databaseUrl = getEnv().DATABASE_URL): Promise<NodeSqliteConnection> {

@@ -30,6 +30,12 @@ export const contacts = sqliteTable(
     headline: text('headline'),
     profileUrl: text('profile_url'),
     linkedinProfileId: text('linkedin_profile_id'),
+    accountId: text('account_id'),
+    outreachStatus: text('outreach_status'),
+    nextReminderAt: integer('next_reminder_at'),
+    deletedAt: integer('deleted_at'),
+    seniorityBucket: text('seniority_bucket'),
+    buyingRole: text('buying_role'),
     relationshipStatus: text('relationship_status', { enum: relationshipStatuses }).notNull().default('new'),
     lastInteractionAt: integer('last_interaction_at'),
     lastReplyAt: integer('last_reply_at'),
@@ -52,6 +58,7 @@ export const conversations = sqliteTable(
     lastMessageDate: integer('last_message_date'),
     lastSender: text('last_sender'),
     lastSyncedAt: integer('last_synced_at'),
+    deletedAt: integer('deleted_at'),
     ...timestamps
   },
   (table) => [
@@ -93,6 +100,7 @@ export const drafts = sqliteTable(
     modelName: text('model_name'),
     approvedAt: integer('approved_at'),
     sentAt: integer('sent_at'),
+    deletedAt: integer('deleted_at'),
     createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`)
   },
   (table) => [

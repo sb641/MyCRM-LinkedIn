@@ -6,10 +6,10 @@ test('loads the CRM shell smoke flow', async ({ page }) => {
   await page.goto('/');
 
   await expect(page).toHaveURL(/\/inbox/);
-  await expect(page.getByRole('heading', { name: 'People-first outreach workspace' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Conversations' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Timeline' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Flags and actions' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Daily operating workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'People' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Conversation and drafts' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Signals and operations' })).toBeVisible();
   await expect(page.getByText('Sync History')).toBeVisible();
   await expect(page.getByLabel('Workspace settings')).toBeVisible();
   await expect(
@@ -36,10 +36,11 @@ test('queues manual sync and approved draft send', async ({ page }) => {
   await page.goto('/');
 
   await page.getByLabel('Top bar actions').getByRole('button', { name: 'Sync Conversations' }).click();
-  await expect(page.getByText(/Manual sync queued:/)).toBeVisible();
+  await expect(page.getByText(/Sync queued for/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Send Message' }).first().click();
-  await expect(page.getByText(/Queued send job/).last()).toBeVisible();
+  await page.getByRole('link', { name: /Contact 3/i }).click();
+  await page.getByText('Approved draft 3').locator('..').getByRole('button', { name: 'Send Message' }).click();
+  await expect(page.getByText(/Queued send for/).last()).toBeVisible();
 });
 
 test('blocks workspace replace restore until confirmation is provided', async ({ page }) => {

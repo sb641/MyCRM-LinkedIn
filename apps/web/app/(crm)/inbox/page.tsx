@@ -7,7 +7,8 @@ import { getBrowserSession } from '@/lib/services/browser-session-service';
 import { listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
 import { listSettings } from '@/lib/services/settings-service';
 import { buildShellDataState, getShellRouteState } from '@/lib/crm-shell';
-import { CrmShell } from '@/app/crm-shell';
+import { buildInboxWorkspaceViewModel } from '@/lib/view-models/inbox';
+import { InboxWorkspace } from '@/components/crm/inbox/inbox-workspace';
 
 type InboxPageProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
@@ -48,7 +49,12 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
     errorMessage
   });
 
-  return <CrmShell state={state} flags={flags} />;
+  const workspace = buildInboxWorkspaceViewModel(state, {
+    queue: getSingleValue(resolvedSearchParams.queue),
+    entity: getSingleValue(resolvedSearchParams.entity)
+  });
+
+  return <InboxWorkspace state={state} workspace={workspace} flags={flags} />;
 }
 
 async function safeLoad<T>(loader: () => Promise<T>) {
@@ -76,4 +82,12 @@ function safeGetFeatureFlags() {
       ENABLE_REAL_SEND: false
     };
   }
+}
+
+function getSingleValue(value: string | string[] | undefined) {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value ?? null;
 }

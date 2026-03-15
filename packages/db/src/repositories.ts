@@ -62,6 +62,12 @@ function normalizeWorkspaceRow(tableName: string, row: Record<string, unknown>) 
     contacts: {
       profileUrl: 'profile_url',
       linkedinProfileId: 'linkedin_profile_id',
+      accountId: 'account_id',
+      outreachStatus: 'outreach_status',
+      nextReminderAt: 'next_reminder_at',
+      deletedAt: 'deleted_at',
+      seniorityBucket: 'seniority_bucket',
+      buyingRole: 'buying_role',
       relationshipStatus: 'relationship_status',
       lastInteractionAt: 'last_interaction_at',
       lastReplyAt: 'last_reply_at',
@@ -75,6 +81,7 @@ function normalizeWorkspaceRow(tableName: string, row: Record<string, unknown>) 
       lastMessageDate: 'last_message_date',
       lastSender: 'last_sender',
       lastSyncedAt: 'last_synced_at',
+      deletedAt: 'deleted_at',
       createdAt: 'created_at',
       updatedAt: 'updated_at'
     },
@@ -97,6 +104,7 @@ function normalizeWorkspaceRow(tableName: string, row: Record<string, unknown>) 
       modelName: 'model_name',
       approvedAt: 'approved_at',
       sentAt: 'sent_at',
+      deletedAt: 'deleted_at',
       createdAt: 'created_at'
     },
     draft_variants: {
@@ -241,6 +249,11 @@ export function createInboxRepository(_db: RepositoryDbClient, sqlite: Repositor
         contactName: string;
         company: string | null;
         headline: string | null;
+        accountId: string | null;
+        outreachStatus: string | null;
+        nextReminderAt: number | null;
+        seniorityBucket: string | null;
+        buyingRole: string | null;
         relationshipStatus: string;
         draftStatus: string | null;
         sendStatus: string | null;
@@ -255,6 +268,11 @@ export function createInboxRepository(_db: RepositoryDbClient, sqlite: Repositor
           c.name AS contactName,
           c.company AS company,
           c.headline AS headline,
+          c.account_id AS accountId,
+          c.outreach_status AS outreachStatus,
+          c.next_reminder_at AS nextReminderAt,
+          c.seniority_bucket AS seniorityBucket,
+          c.buying_role AS buyingRole,
           c.relationship_status AS relationshipStatus,
           d.draft_status AS draftStatus,
           d.send_status AS sendStatus,
@@ -268,6 +286,9 @@ export function createInboxRepository(_db: RepositoryDbClient, sqlite: Repositor
         LEFT JOIN messages m
           ON m.conversation_id = conv.id
          AND m.timestamp = conv.last_message_date
+        WHERE c.deleted_at IS NULL
+          AND conv.deleted_at IS NULL
+          AND (d.id IS NULL OR d.deleted_at IS NULL)
         ORDER BY conv.last_message_date DESC
       `);
 
@@ -275,6 +296,11 @@ export function createInboxRepository(_db: RepositoryDbClient, sqlite: Repositor
         ...row,
         company: row.company ?? null,
         headline: row.headline ?? null,
+        accountId: row.accountId ?? null,
+        outreachStatus: row.outreachStatus ?? null,
+        nextReminderAt: row.nextReminderAt ?? null,
+        seniorityBucket: row.seniorityBucket ?? null,
+        buyingRole: row.buyingRole ?? null,
         draftStatus: row.draftStatus ?? 'none',
         sendStatus: row.sendStatus ?? 'idle',
         lastMessageAt: row.lastMessageAt ?? null,
@@ -297,6 +323,11 @@ export function createContactRepository(_db: RepositoryDbClient, sqlite: Reposit
         position: string | null;
         headline: string | null;
         profileUrl: string | null;
+        accountId: string | null;
+        outreachStatus: string | null;
+        nextReminderAt: number | null;
+        seniorityBucket: string | null;
+        buyingRole: string | null;
         relationshipStatus: string;
         lastInteractionAt: number | null;
         lastReplyAt: number | null;
@@ -309,6 +340,11 @@ export function createContactRepository(_db: RepositoryDbClient, sqlite: Reposit
           position,
           headline,
           profile_url AS profileUrl,
+          account_id AS accountId,
+          outreach_status AS outreachStatus,
+          next_reminder_at AS nextReminderAt,
+          seniority_bucket AS seniorityBucket,
+          buying_role AS buyingRole,
           relationship_status AS relationshipStatus,
           last_interaction_at AS lastInteractionAt,
           last_reply_at AS lastReplyAt,
@@ -400,6 +436,11 @@ export function createContactRepository(_db: RepositoryDbClient, sqlite: Reposit
           position: contactRows[0].position ?? null,
           headline: contactRows[0].headline ?? null,
           profileUrl: contactRows[0].profileUrl ?? null,
+          accountId: contactRows[0].accountId ?? null,
+          outreachStatus: contactRows[0].outreachStatus ?? null,
+          nextReminderAt: contactRows[0].nextReminderAt ?? null,
+          seniorityBucket: contactRows[0].seniorityBucket ?? null,
+          buyingRole: contactRows[0].buyingRole ?? null,
           lastInteractionAt: contactRows[0].lastInteractionAt ?? null,
           lastReplyAt: contactRows[0].lastReplyAt ?? null,
           lastSentAt: contactRows[0].lastSentAt ?? null

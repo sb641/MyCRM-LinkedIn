@@ -9,6 +9,7 @@ import {
   deriveRelationshipStatus,
   getShellRouteState
 } from './crm-shell';
+import { buildInboxWorkspaceViewModel } from './view-models/inbox';
 
 const inboxItem: InboxItemDto = {
   contactId: 'contact-001',
@@ -16,6 +17,11 @@ const inboxItem: InboxItemDto = {
   contactName: 'Contact 1',
   company: 'Company 1',
   headline: 'Founder',
+  accountId: 'account-001',
+  outreachStatus: 'active_pipeline',
+  nextReminderAt: null,
+  seniorityBucket: 'founder',
+  buyingRole: 'decision_maker',
   relationshipStatus: 'new',
   draftStatus: 'generated',
   sendStatus: 'idle',
@@ -32,6 +38,11 @@ const details: ContactConversationDetailsDto = {
     company: 'Company 1',
     headline: 'Founder',
     profileUrl: 'https://linkedin.com/in/contact-1',
+    accountId: 'account-001',
+    outreachStatus: 'active_pipeline',
+    nextReminderAt: null,
+    seniorityBucket: 'founder',
+    buyingRole: 'decision_maker',
     relationshipStatus: 'new',
     lastInteractionAt: 1,
     lastReplyAt: null,
@@ -169,6 +180,44 @@ describe('crm shell state', () => {
     expect(viewModel.contact.badges.some((badge) => badge.label === '1 drafts')).toBe(true);
     expect(viewModel.contact.followupDueLabel).toContain('Follow-up');
     expect(viewModel.drafts[0]?.statusLabel).toBe('generated');
+  });
+
+  it('builds inbox workspace queues and filters from shell state', () => {
+    const state = buildShellDataState({
+      inbox: [
+        inboxItem,
+        {
+          ...inboxItem,
+          contactId: 'contact-002',
+          conversationId: 'conversation-002',
+          relationshipStatus: 'awaiting_reply',
+          unreadCount: 2,
+          draftStatus: 'none',
+          sendStatus: 'idle'
+        },
+        {
+          ...inboxItem,
+          contactId: 'contact-003',
+          conversationId: 'conversation-003',
+          relationshipStatus: 'followup_due',
+          nextReminderAt: Date.now() + 86_400_000,
+          draftStatus: 'approved'
+        }
+      ],
+      route: { selectedContactId: 'contact-001', selectedConversationId: 'conversation-001', sort: 'recent' },
+      details
+    });
+
+    const workspace = buildInboxWorkspaceViewModel(state, {
+      queue: 'drafts',
+      entity: 'accounts'
+    });
+
+    expect(workspace.activeQueue).toBe('drafts');
+    expect(workspace.entityMode).toBe('accounts');
+    expect(workspace.visibleItems).toHaveLength(2);
+    expect(workspace.queueTabs.find((tab) => tab.key === 'needs-reply')?.count).toBe(1);
+    expect(workspace.filterChips.some((chip) => chip.label === 'Outreach')).toBe(true);
   });
 
   it('builds an active sync job view model for queued import jobs', () => {

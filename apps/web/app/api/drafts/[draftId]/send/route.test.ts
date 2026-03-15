@@ -34,6 +34,31 @@ describe('POST /api/drafts/[draftId]/send', () => {
     expect(await response.json()).toEqual({ success: true, jobId: 'job-123' });
   });
 
+  it('uses the route draft id when the request body omits it', async () => {
+    queueApprovedDraftSend.mockResolvedValueOnce({ success: true, jobId: 'job-456' });
+    const { POST } = await import('./route');
+
+    const response = await POST(
+      new Request('http://localhost', {
+        method: 'POST',
+        body: JSON.stringify({
+          conversationId: 'conversation-003',
+          accountId: 'local-account',
+          provider: 'linkedin-browser'
+        })
+      }),
+      { params: Promise.resolve({ draftId: 'draft-003' }) }
+    );
+
+    expect(response.status).toBe(200);
+    expect(queueApprovedDraftSend).toHaveBeenCalledWith({
+      draftId: 'draft-003',
+      conversationId: 'conversation-003',
+      accountId: 'local-account',
+      provider: 'linkedin-browser'
+    });
+  });
+
   it('maps not found errors', async () => {
     queueApprovedDraftSend.mockRejectedValueOnce(new NotFoundError('missing'));
     const { POST } = await import('./route');
