@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  campaignStatusSchema,
   draftStatusSchema,
   jobStatusSchema,
   jobTypeSchema,
@@ -132,6 +133,77 @@ export const reminderSchema = z.object({
   updatedAt: z.number().int()
 });
 
+export const campaignSummarySchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  objective: z.string().min(1),
+  status: campaignStatusSchema,
+  defaultPrompt: z.string().nullable(),
+  tags: z.array(z.string().min(1)),
+  targetCount: z.number().int().nonnegative(),
+  draftCount: z.number().int().nonnegative(),
+  reminderCount: z.number().int().nonnegative(),
+  lastActivityAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int()
+});
+
+export const campaignTargetSchema = z.object({
+  id: z.string().min(1),
+  campaignId: z.string().min(1),
+  contactId: z.string().min(1),
+  createdAt: z.number().int(),
+  contact: z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    company: z.string().nullable(),
+    headline: z.string().nullable(),
+    relationshipStatus: relationshipStatusSchema,
+    nextReminderAt: z.number().int().nullable(),
+    lastInteractionAt: z.number().int().nullable()
+  })
+});
+
+export const campaignActivityItemSchema = z.object({
+  id: z.string().min(1),
+  type: z.enum(['draft', 'reminder', 'audit']),
+  label: z.string().min(1),
+  timestamp: z.number().int(),
+  status: z.string().nullable(),
+  entityId: z.string().min(1)
+});
+
+export const campaignDetailSchema = z.object({
+  campaign: campaignSummarySchema.extend({
+    defaultPrompt: z.string().nullable(),
+    tags: z.array(z.string().min(1))
+  }),
+  targets: z.array(campaignTargetSchema),
+  drafts: z.array(draftSummarySchema),
+  reminders: z.array(reminderSchema),
+  activity: z.array(campaignActivityItemSchema)
+});
+
+export const createCampaignInputSchema = z.object({
+  name: z.string().min(1).max(200),
+  objective: z.string().min(1).max(500),
+  status: campaignStatusSchema.default('draft'),
+  defaultPrompt: z.string().max(4000).optional().default(''),
+  tags: z.array(z.string().min(1).max(50)).optional().default([])
+});
+
+export const updateCampaignInputSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  objective: z.string().min(1).max(500).optional(),
+  status: campaignStatusSchema.optional(),
+  defaultPrompt: z.string().max(4000).optional(),
+  tags: z.array(z.string().min(1).max(50)).optional()
+});
+
+export const addCampaignTargetsInputSchema = z.object({
+  contactIds: z.array(z.string().min(1)).min(1)
+});
+
 export const createReminderInputSchema = z.object({
   entityType: reminderEntityTypeSchema,
   entityId: z.string().min(1),
@@ -259,6 +331,25 @@ export const jobWithAuditSchema = z.object({
   auditEntries: z.array(auditLogEntrySchema)
 });
 
+export const suppressionSchema = z.object({
+  id: z.string().min(1),
+  contactId: z.string().min(1).nullable().optional(),
+  linkedinProfileId: z.string().min(1),
+  reason: z.string().nullable().optional(),
+  createdAt: z.number().int(),
+  deletedAt: z.number().int().nullable().optional()
+});
+
+export const createSuppressionInputSchema = z.object({
+  contactId: z.string().min(1).optional(),
+  linkedinProfileId: z.string().min(1),
+  reason: z.string().max(1000).optional().default('')
+});
+
+export const restoreSuppressionInputSchema = z.object({
+  suppressionId: z.string().min(1)
+});
+
 export const enqueueJobInputSchema = z.object({
   type: jobTypeSchema,
   payload: z.record(z.string(), z.unknown()),
@@ -343,6 +434,8 @@ export const settingsSnapshotSchema = z.object({
 export const workspaceBackupDataSchema = z.object({
   accounts: z.array(z.record(z.string(), z.unknown())),
   accountAliases: z.array(z.record(z.string(), z.unknown())),
+  campaigns: z.array(z.record(z.string(), z.unknown())),
+  campaignTargets: z.array(z.record(z.string(), z.unknown())),
   reminders: z.array(z.record(z.string(), z.unknown())),
   contacts: z.array(z.record(z.string(), z.unknown())),
   conversations: z.array(z.record(z.string(), z.unknown())),
@@ -351,6 +444,7 @@ export const workspaceBackupDataSchema = z.object({
   draftVariants: z.array(z.record(z.string(), z.unknown())),
   jobs: z.array(z.record(z.string(), z.unknown())),
   syncRuns: z.array(z.record(z.string(), z.unknown())),
+  syncSuppressions: z.array(z.record(z.string(), z.unknown())),
   auditLog: z.array(z.record(z.string(), z.unknown()))
 });
 
@@ -462,7 +556,14 @@ export type ContactConversationDetailsDto = z.infer<typeof contactConversationDe
 export type AccountAliasDto = z.infer<typeof accountAliasSchema>;
 export type AccountSummaryDto = z.infer<typeof accountSummarySchema>;
 export type AccountDetailDto = z.infer<typeof accountDetailSchema>;
+export type CampaignSummaryDto = z.infer<typeof campaignSummarySchema>;
+export type CampaignTargetDto = z.infer<typeof campaignTargetSchema>;
+export type CampaignActivityItemDto = z.infer<typeof campaignActivityItemSchema>;
+export type CampaignDetailDto = z.infer<typeof campaignDetailSchema>;
 export type ReminderDto = z.infer<typeof reminderSchema>;
+export type CreateCampaignInput = z.infer<typeof createCampaignInputSchema>;
+export type UpdateCampaignInput = z.infer<typeof updateCampaignInputSchema>;
+export type AddCampaignTargetsInput = z.infer<typeof addCampaignTargetsInputSchema>;
 export type CreateAccountInput = z.infer<typeof createAccountInputSchema>;
 export type AssignContactsToAccountInput = z.infer<typeof assignContactsToAccountInputSchema>;
 export type MergeAccountsInput = z.infer<typeof mergeAccountsInputSchema>;
@@ -476,6 +577,9 @@ export type GeneratedDraftResultDto = z.infer<typeof generatedDraftResultSchema>
 export type JobDto = z.infer<typeof jobDtoSchema>;
 export type AuditLogEntryDto = z.infer<typeof auditLogEntrySchema>;
 export type JobWithAuditDto = z.infer<typeof jobWithAuditSchema>;
+export type SuppressionDto = z.infer<typeof suppressionSchema>;
+export type CreateSuppressionInput = z.infer<typeof createSuppressionInputSchema>;
+export type RestoreSuppressionInput = z.infer<typeof restoreSuppressionInputSchema>;
 export type EnqueueJobInput = z.infer<typeof enqueueJobInputSchema>;
 export type EnqueueJobResultDto = z.infer<typeof enqueueJobResultSchema>;
 export type MutationResultDto = z.infer<typeof mutationResultSchema>;

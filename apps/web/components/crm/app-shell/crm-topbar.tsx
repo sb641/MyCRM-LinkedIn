@@ -13,7 +13,7 @@ export function CrmTopbar({ title, description, eyebrow = 'Workspace', actions }
         <h2 className="crm-route-title">{title}</h2>
         <p className="crm-route-copy">{description}</p>
       </div>
-      {actions ? <div className="crm-route-actions">{actions}</div> : null}
+      {actions ? <div className="crm-route-actions">{actions}</div> : <div className="crm-route-kicker">Operator workspace</div>}
     </header>
   );
 }

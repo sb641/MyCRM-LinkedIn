@@ -1,5 +1,6 @@
 import { createLogger, getFeatureFlags } from '@mycrm/core';
-import { createDb, createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
+import { createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
+import { createNodeDb as createDb } from '../../../packages/db/src/server/node-sqlite';
 import { createFileSessionStore, runImportThreads, sendBrowserMessage } from '@mycrm/automation';
 
 const logger = createLogger('worker');
@@ -15,8 +16,61 @@ async function markSentDraft(databaseUrl: string | undefined, draftId: string, s
   }
 }
 
+async function countUnsuppressedImportedThreads(
+  databaseUrl: string | undefined,
+  threadIds: string[] | undefined
+) {
+  if (!threadIds || threadIds.length === 0) {
+    return 0;
+  }
+
+  const { db: mutationDb, sqlite: mutationSqlite } = await createDb(databaseUrl);
+
+  try {
+    const repository = createMutationRepository(mutationDb, mutationSqlite);
+    let importedCount = 0;
+    let matchedConversationCount = 0;
+
+    for (const threadId of threadIds) {
+      const [contact] = await mutationSqlite.all<{ linkedin_profile_id: string | null }>(
+        `
+          SELECT c.linkedin_profile_id
+          FROM conversations conv
+          INNER JOIN contacts c ON c.id = conv.contact_id
+          WHERE conv.linkedin_thread_id = '${threadId.replace(/'/g, "''")}'
+          LIMIT 1
+        `
+      );
+
+      if (!contact) {
+        continue;
+      }
+
+      matchedConversationCount += 1;
+
+      if (!contact?.linkedin_profile_id) {
+        importedCount += 1;
+        continue;
+      }
+
+      const suppressed = await repository.isLinkedinProfileSuppressed(contact.linkedin_profile_id);
+      if (!suppressed) {
+        importedCount += 1;
+      }
+    }
+
+    return {
+      importedCount,
+      matchedConversationCount
+    };
+  } finally {
+    await mutationSqlite.close();
+  }
+}
+
 export const __testables = {
-  markSentDraft
+  markSentDraft,
+  countUnsuppressedImportedThreads
 };
 
 export async function runWorkerCycle(databaseUrl?: string) {
@@ -47,11 +101,19 @@ export async function runWorkerCycle(databaseUrl?: string) {
             enableRealBrowserSync: flags.ENABLE_REAL_BROWSER_SYNC,
             sessionStore: createFileSessionStore()
           });
+          const suppressionAwareCounts = await countUnsuppressedImportedThreads(
+            resolvedDatabaseUrl,
+            'threadIds' in result && Array.isArray(result.threadIds) ? result.threadIds : undefined
+          );
+          const itemsImported =
+            suppressionAwareCounts.matchedConversationCount > 0
+              ? suppressionAwareCounts.importedCount
+              : result.itemsImported;
           await syncRunRepository.markSyncRunFinished({
             syncRunId,
             status: 'succeeded',
             itemsScanned: result.itemsScanned,
-            itemsImported: result.itemsImported
+            itemsImported
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown import error';

@@ -6,6 +6,7 @@ import { useState } from 'react';
 import type { FeatureFlags } from '@mycrm/core';
 import type { ShellDataState } from '@/lib/crm-shell';
 import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
+import { DeleteIgnoreModal } from '@/components/crm/modals/delete-ignore-modal';
 import { ReminderModal } from '@/components/crm/modals/reminder-modal';
 import { ReminderBadge } from '@/components/crm/shared/reminder-badge';
 import type { InboxWorkspaceViewModel } from '@/lib/view-models/inbox';
@@ -63,27 +64,51 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [isReminderModalOpen, setIsReminderModalOpen] = useState(false);
   const [reminderMessage, setReminderMessage] = useState<string | null>(null);
   const [reminderError, setReminderError] = useState<string | null>(null);
+  const [ignoreTarget, setIgnoreTarget] = useState<{ contactId: string; contactName: string } | null>(null);
 
   const restorePreview = getRestorePreview(backupPayload);
   const isAccountsMode = workspace.entityMode === 'accounts';
   const selectedAccountId = workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id ?? null;
   const assignableContacts = state.inbox.filter((item) => item.accountId !== selectedAccountId);
   const mergeCandidates = workspace.visibleAccounts.filter((account) => account.id !== selectedAccountId);
+  const effectiveMergeSourceAccountId =
+    mergeSourceAccountId && mergeCandidates.some((account) => account.id === mergeSourceAccountId) ? mergeSourceAccountId : '';
   const stakeholderLanes = workspace.accountDetails ? buildStakeholderLanes(workspace.accountDetails.contacts) : [];
+  const visibleConversationItems = workspace.visibleItems.filter(
+    (item, index, items) => items.findIndex((candidate) => candidate.conversationId === item.conversationId) === index
+  );
 
-  function refreshWorkspace(nextAccountId?: string | null) {
+  function refreshWorkspace(options?: {
+    nextAccountId?: string | null;
+    nextContactId?: string | null;
+    nextConversationId?: string | null;
+  }) {
     const query = buildQueryParams(searchParams, {
       entity: workspace.entityMode,
       queue: workspace.activeQueue,
       sort: state.sort,
-      accountId: nextAccountId ?? selectedAccountId,
-      contactId: workspace.selectedItem?.contactId ?? state.selectedItem?.contactId,
-      conversationId: workspace.selectedItem?.conversationId ?? state.selectedItem?.conversationId
+      accountId: options?.nextAccountId ?? selectedAccountId,
+      contactId:
+        options && 'nextContactId' in options
+          ? options.nextContactId ?? undefined
+          : workspace.selectedItem?.contactId ?? state.selectedItem?.contactId,
+      conversationId:
+        options && 'nextConversationId' in options
+          ? options.nextConversationId ?? undefined
+          : workspace.selectedItem?.conversationId ?? state.selectedItem?.conversationId
     });
 
     const nextUrl = `${pathname}?${query.toString()}`;
 
     window.location.assign(nextUrl);
+  }
+
+  function handleIgnoreSuccess() {
+    refreshWorkspace({
+      nextAccountId: selectedAccountId,
+      nextContactId: null,
+      nextConversationId: null
+    });
   }
 
   async function handleGenerateDraft() {
@@ -132,7 +157,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     setSelectedConversationIds([]);
   }
 
-  const selectedPeople: BulkDraftSelection[] = workspace.visibleItems
+  const selectedPeople: BulkDraftSelection[] = visibleConversationItems
     .filter((item) => selectedConversationIds.includes(item.conversationId))
     .map((item) => ({
       contactId: item.contactId,
@@ -353,7 +378,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       setNewAccountName('');
       setNewAccountDomain('');
       setNewAccountNotes('');
-      refreshWorkspace(body.account.id);
+      refreshWorkspace({ nextAccountId: body.account.id });
     } catch (error) {
       setAccountActionError(error instanceof Error ? error.message : 'Unable to create account');
     } finally {
@@ -387,7 +412,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
       setAccountActionMessage(`Assigned ${body.contacts.length} stakeholders to ${body.account.name}`);
       setSelectedAccountContactIds([]);
-      refreshWorkspace(selectedAccountId);
+      refreshWorkspace({ nextAccountId: selectedAccountId });
     } catch (error) {
       setAccountActionError(error instanceof Error ? error.message : 'Unable to assign contacts');
     } finally {
@@ -396,7 +421,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   }
 
   async function handleMergeAccounts() {
-    if (!selectedAccountId || !mergeSourceAccountId) {
+    if (!selectedAccountId || !effectiveMergeSourceAccountId) {
       return;
     }
 
@@ -411,7 +436,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          sourceAccountId: mergeSourceAccountId,
+          sourceAccountId: effectiveMergeSourceAccountId,
           targetAccountId: selectedAccountId
         })
       });
@@ -420,9 +445,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
         throw new Error(body.message ?? body.error?.message ?? 'Unable to merge accounts');
       }
 
-      setAccountActionMessage(`Merged ${mergeSourceAccountId} into ${body.account.name}`);
+      setAccountActionMessage(`Merged ${effectiveMergeSourceAccountId} into ${body.account.name}`);
       setMergeSourceAccountId('');
-      refreshWorkspace(selectedAccountId);
+      refreshWorkspace({ nextAccountId: selectedAccountId });
     } catch (error) {
       setAccountActionError(error instanceof Error ? error.message : 'Unable to merge accounts');
     } finally {
@@ -462,7 +487,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     }
 
     setReminderMessage('Reminder saved');
-    refreshWorkspace(selectedAccountId);
+    refreshWorkspace({ nextAccountId: selectedAccountId });
   }
 
   async function handleCompleteReminder() {
@@ -506,7 +531,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       }
 
       setReminderMessage('Reminder completed');
-      refreshWorkspace(selectedAccountId);
+      refreshWorkspace({ nextAccountId: selectedAccountId });
     } catch (error) {
       setReminderError(error instanceof Error ? error.message : 'Unable to complete reminder');
     }
@@ -516,38 +541,57 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     <main className="crm-page">
       <div className="crm-backdrop" />
       <div className="crm-shell inbox-workspace-shell">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Inbox</p>
-            <h1 className="hero-title">Daily operating workspace</h1>
-            <p className="hero-copy">Work the queue by people or accounts, keep context visible, and preserve manual approval for every outbound message.</p>
+        <header className="topbar inbox-topbar inbox-operator-topbar">
+          <div className="inbox-operator-heading">
+            <div>
+              <p className="eyebrow">Inbox</p>
+              <h1 className="hero-title inbox-operator-title">Operator workspace</h1>
+            </div>
+            <p className="hero-copy inbox-operator-copy">Queue on the left, active thread and drafts in the center, context on the right.</p>
           </div>
-          <div className="topbar-actions" aria-label="Top bar actions">
-            <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
-              {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
-            </button>
-            <button className="ghost-button" type="button" onClick={() => setIsReminderModalOpen(true)}>
-              Set reminder
-            </button>
-            <button className="ghost-button" type="button" onClick={handleCompleteReminder}>
-              Complete reminder
-            </button>
-            <button className="ghost-button" type="button">New note</button>
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={() => setIsBulkModalOpen(true)}
-              disabled={selectedPeople.length === 0 || isAccountsMode}
-            >
-              {selectedPeople.length > 0 && !isAccountsMode ? `Bulk Generate (${selectedPeople.length})` : 'Bulk Generate'}
-            </button>
-            <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!workspace.details || isGenerating || isAccountsMode}>
-              {isGenerating ? 'Generating draft...' : 'Generate Draft'}
-            </button>
+          <div className="topbar-actions inbox-operator-actions" aria-label="Top bar actions">
+            <div className="inbox-operator-action-group" aria-label="Sync and reminders">
+              <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
+                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
+              </button>
+              <button className="ghost-button" type="button" onClick={() => setIsReminderModalOpen(true)}>
+                Set reminder
+              </button>
+              <button className="ghost-button" type="button" onClick={handleCompleteReminder}>
+                Complete reminder
+              </button>
+            </div>
+            <div className="inbox-operator-action-group" aria-label="Draft actions">
+              {!isAccountsMode && workspace.details ? (
+                <button
+                  className="ghost-button"
+                  type="button"
+                  onClick={() =>
+                    setIgnoreTarget({
+                      contactId: workspace.details?.contact.id ?? workspace.selectedItem?.contactId ?? '',
+                      contactName: workspace.details?.contact.name ?? workspace.selectedItem?.contactName ?? 'this person'
+                    })
+                  }
+                >
+                  Ignore Person
+                </button>
+              ) : null}
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsBulkModalOpen(true)}
+                disabled={selectedPeople.length === 0 || isAccountsMode}
+              >
+                {selectedPeople.length > 0 && !isAccountsMode ? `Bulk Generate (${selectedPeople.length})` : 'Bulk Generate'}
+              </button>
+              <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={!workspace.details || isGenerating || isAccountsMode}>
+                {isGenerating ? 'Generating draft...' : 'Generate Draft'}
+              </button>
+            </div>
           </div>
         </header>
 
-        <section className="inbox-queue-bar panel">
+        <section className="inbox-queue-bar panel inbox-queue-toolbar">
           <div className="inbox-queue-tabs" aria-label="Inbox queues">
             {workspace.queueTabs.map((tab) => (
               <Link
@@ -569,7 +613,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               </Link>
             ))}
           </div>
-          <div className="inbox-toolbar-meta">
+          <div className="inbox-toolbar-meta inbox-toolbar-meta-compact">
             <div className="entity-toggle" aria-label="Inbox entity mode">
               <Link
                 href={{
@@ -605,17 +649,22 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                 </span>
               ))}
             </div>
+            <div className="chip-row inbox-summary-chips" aria-label="Inbox workspace summary">
+              <span className="subtle-pill">Needs reply {workspace.summary.needsReplyCount}</span>
+              <span className="subtle-pill">Drafts {workspace.summary.draftCount}</span>
+              <span className="subtle-pill">Follow-ups {workspace.summary.followUpCount}</span>
+            </div>
           </div>
         </section>
 
         <div className="workspace-grid inbox-workspace-grid">
-          <aside className="panel sidebar-panel">
-            <div className="panel-header">
+          <aside className="panel sidebar-panel inbox-list-panel">
+            <div className="panel-header panel-header-compact inbox-list-header">
               <div>
                 <p className="eyebrow">Queue</p>
                 <h2 className="panel-title">{workspace.entityMode === 'people' ? 'People' : 'Accounts'}</h2>
               </div>
-              <div className="panel-header-actions">
+              <div className="panel-header-actions panel-header-actions-compact">
                 <span className="subtle-pill">Visible {isAccountsMode ? workspace.summary.visibleAccounts : workspace.summary.visibleConversations}</span>
                 <span className="count-pill">{isAccountsMode ? workspace.summary.totalAccounts : workspace.summary.totalConversations}</span>
                 {selectedPeople.length > 0 && !isAccountsMode ? (
@@ -626,13 +675,27 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               </div>
             </div>
 
+            <div className="inbox-list-controls" aria-label="Queue controls">
+              <div className="inbox-list-controls-row">
+                <span className="subtle-pill">{workspace.activeQueue}</span>
+                <span className="subtle-pill">Sort {state.sort}</span>
+              </div>
+              <div className="inbox-list-controls-row inbox-list-controls-row-scroll" aria-label="Active filters">
+                {workspace.filterChips.map((chip) => (
+                  <span key={`queue-${chip.label}-${chip.value}`} className="subtle-pill">
+                    {chip.label}: {chip.value}
+                  </span>
+                ))}
+              </div>
+            </div>
+
             {state.view === 'empty' ? (
               <EmptyState title="Inbox is empty" body="Run a sync or seed more fixtures to populate the queue." />
             ) : isAccountsMode ? (
               workspace.visibleAccounts.length === 0 ? (
                 <EmptyState title="No accounts in this queue" body="Create an account or assign contacts to start grouping stakeholders." />
               ) : (
-                <nav className="conversation-list" aria-label="Account list">
+                <nav className="conversation-list dense-list queue-list" aria-label="Account list">
                   {workspace.visibleAccounts.map((account) => {
                     const isActive = workspace.selectedAccount?.id === account.id;
 
@@ -648,17 +711,19 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                             sort: state.sort
                           })
                         }}
-                        className={isActive ? 'conversation-card active' : 'conversation-card'}
+                        className={isActive ? 'conversation-card active dense-card queue-list-item' : 'conversation-card dense-card queue-list-item'}
                       >
-                        <div className="conversation-row conversation-row-selectable">
-                          <strong>{account.name}</strong>
-                          <span className="subtle-pill">{account.relativeUpdatedAt}</span>
+                        <div className="queue-list-item-main">
+                          <div className="conversation-row conversation-row-selectable queue-list-item-topline">
+                            <strong className="queue-list-item-title">{account.name}</strong>
+                            <span className="subtle-pill">{account.relativeUpdatedAt}</span>
+                          </div>
+                          <p className="conversation-meta queue-list-item-meta">
+                            {account.domain ?? 'No domain'} · {account.relationshipLabel}
+                          </p>
+                          <p className="conversation-preview queue-list-item-preview">{account.notes?.trim() || 'No account notes yet'}</p>
                         </div>
-                        <p className="conversation-meta">
-                          {account.domain ?? 'No domain'} · {account.relationshipLabel}
-                        </p>
-                        <p className="conversation-preview">{account.notes?.trim() || 'No account notes yet'}</p>
-                        <div className="chip-row" aria-label="Account badges">
+                        <div className="chip-row queue-list-item-chips" aria-label="Account badges">
                           {account.badges.map((badge) => (
                             <span key={`${account.id}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
                               {badge.label}
@@ -676,11 +741,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                   })}
                 </nav>
               )
-            ) : workspace.visibleItems.length === 0 ? (
+            ) : visibleConversationItems.length === 0 ? (
               <EmptyState title="No conversations in this queue" body="Switch queue tabs or sync more data to continue." />
             ) : (
-              <nav className="conversation-list" aria-label="Conversation list">
-                {workspace.visibleItems.map((item) => {
+              <nav className="conversation-list dense-list queue-list" aria-label="Conversation list">
+                {visibleConversationItems.map((item) => {
                   const isActive = workspace.selectedItem?.contactId === item.contactId;
 
                   return (
@@ -696,49 +761,142 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                           sort: state.sort
                         })
                       }}
-                      className={isActive ? 'conversation-card active' : 'conversation-card'}
+                      className={isActive ? 'conversation-card active dense-card queue-list-item' : 'conversation-card dense-card queue-list-item'}
                     >
-                      <div className="conversation-row conversation-row-selectable">
-                        <label className="conversation-select-toggle" onClick={(event) => event.preventDefault()}>
-                          <input
-                            type="checkbox"
-                            checked={selectedConversationIds.includes(item.conversationId)}
-                            onChange={() => toggleConversationSelection(item.conversationId)}
-                            aria-label={`Select ${item.contactName}`}
-                          />
-                        </label>
-                        <strong>{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
-                        <span className="subtle-pill">{item.relativeLastMessage}</span>
+                      <div className="queue-list-item-main">
+                        <div className="conversation-row conversation-row-selectable queue-list-item-topline">
+                          <label
+                            className="conversation-select-toggle"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedConversationIds.includes(item.conversationId)}
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }}
+                              onChange={() => toggleConversationSelection(item.conversationId)}
+                              aria-label={`Select ${item.contactName}`}
+                            />
+                          </label>
+                          <strong className="queue-list-item-title">{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
+                          <span className="subtle-pill">{item.relativeLastMessage}</span>
+                        </div>
+                        <p className="conversation-meta queue-list-item-meta">{item.company ?? 'Independent'} · {item.headline ?? 'No headline yet'}</p>
+                        <p className="conversation-preview queue-list-item-preview">{item.lastMessageText ?? 'No messages yet'}</p>
                       </div>
-                      <p className="conversation-meta">{item.company ?? 'Independent'} · {item.headline ?? 'No headline yet'}</p>
-                      <p className="conversation-preview">{item.lastMessageText ?? 'No messages yet'}</p>
-                      <div className="chip-row" aria-label="Conversation badges">
-                        {item.badges.map((badge) => (
-                          <span key={`${item.conversationId}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
-                            {badge.label}
-                          </span>
-                        ))}
-                        {item.reminderLabel && item.reminderTone ? (
-                          <ReminderBadge
-                            label={item.reminderLabel}
-                            tone={item.reminderTone === 'danger' ? 'danger' : item.reminderTone === 'warning' ? 'warning' : 'neutral'}
-                          />
-                        ) : null}
+                      <div className="queue-list-item-side" onClick={(event) => event.preventDefault()}>
+                        <div className="quick-action-row queue-list-item-actions" aria-label="Conversation quick actions">
+                          <button
+                            className="mini-action intent-warning"
+                            type="button"
+                            onClick={() => setIgnoreTarget({ contactId: item.contactId, contactName: item.contactName })}
+                          >
+                            Ignore
+                          </button>
+                        </div>
+                        <div className="chip-row queue-list-item-chips" aria-label="Conversation badges">
+                          {item.badges.map((badge) => (
+                            <span key={`${item.conversationId}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
+                              {badge.label}
+                            </span>
+                          ))}
+                          {item.reminderLabel && item.reminderTone ? (
+                            <ReminderBadge
+                              label={item.reminderLabel}
+                              tone={item.reminderTone === 'danger' ? 'danger' : item.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                            />
+                          ) : null}
+                        </div>
                       </div>
                     </Link>
                   );
                 })}
               </nav>
             )}
+
+            <section className="rail-section inbox-rail-tools" aria-label="Queue tools">
+              <div className="rail-section-header">
+                <p className="eyebrow">Sync</p>
+                <span className="subtle-pill">Operator</span>
+              </div>
+              <label className="draft-goal-field compact-field">
+                <span>Account ID</span>
+                <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
+              </label>
+              <button className="accent-button rail-action" type="button" onClick={handleManualSync} disabled={isSyncing}>
+                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
+              </button>
+              {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
+              {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
+            </section>
+
+            <section className="rail-section inbox-rail-admin" aria-label="Workspace admin tools">
+              <div className="rail-section-header">
+                <p className="eyebrow">Admin</p>
+                <span className="subtle-pill">Workspace</span>
+              </div>
+              <div className="quick-action-row rail-action-row">
+                <button className="ghost-button" type="button" onClick={handleSaveSettings} disabled={isSavingSettings}>
+                  {isSavingSettings ? 'Saving...' : 'Save settings'}
+                </button>
+                <button className="ghost-button" type="button" onClick={handleExportBackup}>
+                  Export backup
+                </button>
+              </div>
+              {settingsMessage ? <p className="generated-draft-preview">{settingsMessage}</p> : null}
+              {settingsError ? <p className="generated-draft-error">{settingsError}</p> : null}
+              <details className="rail-restore-panel">
+                <summary>Restore workspace data</summary>
+                <div className="rail-restore-content">
+                  <p className="stack-copy">
+                    Export creates a workspace snapshot without secrets. Restore expects a valid snapshot payload.
+                  </p>
+                  <label className="draft-goal-field compact-field">
+                    <span>Restore/import payload</span>
+                    <textarea value={backupPayload} onChange={(event) => setBackupPayload(event.target.value)} rows={8} />
+                  </label>
+                  {restorePreview ? (
+                    <p className="conversation-meta">
+                      Scope: <strong>{restorePreview.scope}</strong> · Mode: <strong>{restorePreview.mode}</strong>
+                    </p>
+                  ) : null}
+                  <label className="draft-goal-field compact-field">
+                    <span>Replace confirmation</span>
+                    <input value={restoreConfirmation} onChange={(event) => setRestoreConfirmation(event.target.value)} />
+                  </label>
+                  <div className="quick-action-row rail-action-row">
+                    <button className="ghost-button" type="button" onClick={() => setBackupPayload('')}>
+                      Clear
+                    </button>
+                    <button className="ghost-button" type="button" onClick={handleImportBackup} disabled={!backupPayload.trim()}>
+                      Restore
+                    </button>
+                  </div>
+                </div>
+              </details>
+            </section>
           </aside>
 
-          <section className="panel main-panel">
-            <div className="panel-header">
+          <section className="panel main-panel inbox-main-panel">
+            <div className="panel-header panel-header-compact">
               <div>
                 <p className="eyebrow">Workspace</p>
                 <h2 className="panel-title">{isAccountsMode ? 'Account workspace' : 'Conversation and drafts'}</h2>
               </div>
-              <span className="subtle-pill">{isAccountsMode ? 'ABM grouping' : 'Queue-first'}</span>
+              <div className="panel-header-actions panel-header-actions-compact">
+                <span className="subtle-pill">{isAccountsMode ? 'ABM grouping' : 'Queue-first'}</span>
+                {!isAccountsMode && workspace.details ? (
+                  <span className="subtle-pill">{workspace.details.messages.length} messages</span>
+                ) : null}
+                {!isAccountsMode && workspace.details ? (
+                  <span className="subtle-pill">{workspace.details.drafts.length} drafts</span>
+                ) : null}
+              </div>
             </div>
 
             {state.view === 'error' ? (
@@ -800,7 +958,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                   </section>
 
                   <div className="inbox-content-columns">
-                    <section className="message-stack" aria-label="Stakeholders">
+                    <section className="message-stack dense-stack" aria-label="Stakeholders">
                       <div className="conversation-row">
                         <h3>Stakeholders</h3>
                         <span className="subtle-pill">{workspace.accountDetails.contacts.length}</span>
@@ -827,7 +985,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                       )}
                     </section>
 
-                    <section className="draft-stack" aria-label="Account aliases">
+                    <section className="draft-stack dense-stack" aria-label="Account aliases">
                       <div className="conversation-row">
                         <h3>Aliases</h3>
                         <span className="subtle-pill">{workspace.accountDetails.account.aliases.length}</span>
@@ -947,7 +1105,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                     </div>
                     <label className="draft-goal-field">
                       <span>Source account</span>
-                      <select value={mergeSourceAccountId} onChange={(event) => setMergeSourceAccountId(event.target.value)}>
+                      <select value={effectiveMergeSourceAccountId} onChange={(event) => setMergeSourceAccountId(event.target.value)}>
                         <option value="">Select account</option>
                         {mergeCandidates.map((account) => (
                           <option key={account.id} value={account.id}>
@@ -960,7 +1118,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                       className="ghost-button"
                       type="button"
                       onClick={handleMergeAccounts}
-                      disabled={!selectedAccountId || !mergeSourceAccountId || isMergingAccounts}
+                      disabled={!selectedAccountId || !effectiveMergeSourceAccountId || isMergingAccounts}
                     >
                       {isMergingAccounts ? 'Merging...' : 'Merge into current account'}
                     </button>
@@ -973,8 +1131,8 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
             ) : !workspace.details ? (
               <EmptyState title="No conversation selected" body="Choose a queue item to open the conversation workspace." />
             ) : (
-              <div className="timeline-layout inbox-main-layout">
-                <section className="contact-summary">
+              <div className="timeline-layout inbox-main-layout inbox-thread-workspace">
+                <section className="contact-summary inbox-thread-summary">
                   <div className="conversation-row">
                     <div>
                       <h3>{workspace.details.contact.name}</h3>
@@ -1031,89 +1189,167 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                   ) : null}
                 </section>
 
-                <div className="inbox-content-columns">
-                  <section className="message-stack" aria-label="Conversation history">
-                    {workspace.details.messages.length === 0 ? (
-                      <EmptyState title="No messages yet" body="This queue item has no synced message history yet." />
-                    ) : (
-                      workspace.details.messages.map((message) => (
-                        <article
-                          key={message.id}
-                          className={message.isInbound ? 'message-card inbound' : 'message-card outbound'}
-                        >
-                          <div className="conversation-row">
-                            <strong>{message.sender}</strong>
-                            <span className="subtle-pill">{message.relativeTimestamp}</span>
-                          </div>
-                          <p className="message-meta">{message.senderType}</p>
-                          <p>{message.content}</p>
-                        </article>
-                      ))
-                    )}
-                  </section>
+                <section className="inbox-thread-surface" aria-label="Conversation workspace">
+                  <div className="inbox-thread-header">
+                    <div>
+                      <p className="eyebrow">Active thread</p>
+                      <h3>Conversation timeline</h3>
+                    </div>
+                    <div className="panel-header-actions panel-header-actions-compact">
+                      <span className="subtle-pill">{workspace.details.messages.length} messages</span>
+                      <span className="subtle-pill">{workspace.details.drafts.length} drafts</span>
+                    </div>
+                  </div>
 
-                  <section className="draft-stack" aria-label="Draft history">
-                    <div className="conversation-row">
-                      <h3>Drafts</h3>
-                      <span className="subtle-pill">{workspace.details.drafts.length}</span>
-                    </div>
-                    <div className="draft-generator-card">
-                      <label className="draft-goal-field">
-                        <span className="eyebrow">What should this message achieve?</span>
-                        <textarea value={draftGoal} onChange={(event) => setDraftGoal(event.target.value)} rows={3} />
-                      </label>
-                      <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={isGenerating}>
-                        {isGenerating ? 'Generating draft...' : 'Generate Draft'}
-                      </button>
-                      {generatedDraft ? <p className="generated-draft-preview">{generatedDraft}</p> : null}
-                      {generationError ? <p className="generated-draft-error">{generationError}</p> : null}
-                    </div>
-                    {workspace.details.drafts.length === 0 ? (
-                      <EmptyState title="No drafts yet" body="Generate a draft or wait for the next AI suggestion." />
-                    ) : (
-                      workspace.details.drafts.map((draft) => (
-                        <article key={draft.id} className="draft-card">
-                          <div className="conversation-row">
-                            <strong>{draft.statusLabel}</strong>
-                            <span className="subtle-pill">{draft.modelName ?? 'Manual'}</span>
+                  <div className="inbox-thread-columns">
+                    <section className="message-stack dense-stack inbox-thread-timeline" aria-label="Conversation history">
+                      {workspace.details.messages.length === 0 ? (
+                        <EmptyState title="No messages yet" body="This queue item has no synced message history yet." />
+                      ) : (
+                        workspace.details.messages.map((message) => (
+                          <article
+                            key={message.id}
+                            className={message.isInbound ? 'message-card inbound inbox-thread-message' : 'message-card outbound inbox-thread-message'}
+                          >
+                            <div className="conversation-row">
+                              <strong>{message.sender}</strong>
+                              <span className="subtle-pill">{message.relativeTimestamp}</span>
+                            </div>
+                            <p className="message-meta">{message.senderType}</p>
+                            <p>{message.content}</p>
+                          </article>
+                        ))
+                      )}
+                    </section>
+
+                    <section className="draft-stack dense-stack inbox-thread-drafts" aria-label="Draft workspace">
+                      <div className="draft-generator-card inbox-thread-composer">
+                        <div className="conversation-row">
+                          <div>
+                            <p className="eyebrow">Composer</p>
+                            <h3>Draft reply</h3>
                           </div>
-                          <p>{draft.approvedText ?? draft.goalText}</p>
-                          {draft.draftStatus === 'approved' ? (
-                            <button
-                              className="ghost-button"
-                              type="button"
-                              onClick={() => handleQueueSend(draft.id, state.selectedItem?.conversationId)}
-                              disabled={isQueueingSend === draft.id}
-                            >
-                              {isQueueingSend === draft.id ? 'Sending...' : 'Send Message'}
-                            </button>
-                          ) : null}
-                        </article>
-                      ))
-                    )}
-                    {sendMessage ? <p className="generated-draft-preview">{sendMessage}</p> : null}
-                    {sendError ? <p className="generated-draft-error">{sendError}</p> : null}
-                    {bulkGenerationMessage ? <p className="generated-draft-preview">{bulkGenerationMessage}</p> : null}
-                  </section>
-                </div>
+                          <span className="subtle-pill">Main action</span>
+                        </div>
+                        <label className="draft-goal-field compact-field">
+                          <span>What should this message achieve?</span>
+                          <textarea value={draftGoal} onChange={(event) => setDraftGoal(event.target.value)} rows={4} />
+                        </label>
+                        <button className="accent-button" type="button" onClick={handleGenerateDraft} disabled={isGenerating}>
+                          {isGenerating ? 'Generating draft...' : 'Generate Draft'}
+                        </button>
+                        {generatedDraft ? <p className="generated-draft-preview">{generatedDraft}</p> : null}
+                        {generationError ? <p className="generated-draft-error">{generationError}</p> : null}
+                      </div>
+
+                      <section className="draft-stack inbox-thread-draft-history" aria-label="Draft history">
+                        <div className="conversation-row">
+                          <h3>Draft history</h3>
+                          <span className="subtle-pill">{workspace.details.drafts.length}</span>
+                        </div>
+                        {workspace.details.drafts.length === 0 ? (
+                          <EmptyState title="No drafts yet" body="Generate a draft or wait for the next AI suggestion." />
+                        ) : (
+                          workspace.details.drafts.map((draft) => (
+                            <article key={draft.id} className="draft-card inbox-thread-draft-card">
+                              <div className="conversation-row">
+                                <strong>{draft.statusLabel}</strong>
+                                <span className="subtle-pill">{draft.modelName ?? 'Manual'}</span>
+                              </div>
+                              <p>{draft.approvedText ?? draft.goalText}</p>
+                              {draft.draftStatus === 'approved' ? (
+                                <button
+                                  className="ghost-button"
+                                  type="button"
+                                  onClick={() => handleQueueSend(draft.id, state.selectedItem?.conversationId)}
+                                  disabled={isQueueingSend === draft.id}
+                                >
+                                  {isQueueingSend === draft.id ? 'Sending...' : 'Send Message'}
+                                </button>
+                              ) : null}
+                            </article>
+                          ))
+                        )}
+                        {sendMessage ? <p className="generated-draft-preview">{sendMessage}</p> : null}
+                        {sendError ? <p className="generated-draft-error">{sendError}</p> : null}
+                        {bulkGenerationMessage ? <p className="generated-draft-preview">{bulkGenerationMessage}</p> : null}
+                      </section>
+                    </section>
+                  </div>
+                </section>
               </div>
             )}
           </section>
 
-          <aside className="panel side-panel">
-            <div className="panel-header">
+          <aside className="panel side-panel inbox-context-panel">
+            <div className="panel-header panel-header-compact">
               <div>
                 <p className="eyebrow">Context</p>
-                <h2 className="panel-title">Signals and operations</h2>
+                <h2 className="panel-title">Signals</h2>
               </div>
+              <span className="subtle-pill">Live context</span>
             </div>
 
-            <div className="stack-card">
+            {!isAccountsMode && workspace.details ? (
+              <div className="stack-card context-summary-card operator-context-card">
+                <div className="conversation-row">
+                  <p className="eyebrow">Contact snapshot</p>
+                  <span className="subtle-pill">Active</span>
+                </div>
+                <div className="operator-context-identity">
+                  <strong>{workspace.details.contact.name}</strong>
+                  <p className="conversation-meta">{workspace.details.contact.company ?? 'Independent'} · {workspace.details.contact.headline ?? 'No headline yet'}</p>
+                </div>
+                <dl className="flag-list operator-flag-list">
+                  <div>
+                    <dt>Relationship</dt>
+                    <dd>{workspace.details.contact.relationshipLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Next step</dt>
+                    <dd>{workspace.details.contact.nextStepLabel}</dd>
+                  </div>
+                  <div>
+                    <dt>Follow-up</dt>
+                    <dd>{workspace.details.contact.followupDueLabel}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : null}
+
+            {isAccountsMode && workspace.accountDetails ? (
+              <div className="stack-card context-summary-card operator-context-card">
+                <div className="conversation-row">
+                  <p className="eyebrow">Account snapshot</p>
+                  <span className="subtle-pill">ABM</span>
+                </div>
+                <div className="operator-context-identity">
+                  <strong>{workspace.accountDetails.account.name}</strong>
+                  <p className="conversation-meta">{workspace.accountDetails.account.domain ?? 'No domain'} · {workspace.accountDetails.account.relationshipLabel}</p>
+                </div>
+                <dl className="flag-list operator-flag-list">
+                  <div>
+                    <dt>Stakeholders</dt>
+                    <dd>{workspace.accountDetails.contacts.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Aliases</dt>
+                    <dd>{workspace.accountDetails.account.aliases.length}</dd>
+                  </div>
+                  <div>
+                    <dt>Primary alias</dt>
+                    <dd>{workspace.accountDetails.account.primaryAlias ?? 'None'}</dd>
+                  </div>
+                </dl>
+              </div>
+            ) : null}
+
+            <div className="stack-card context-summary-card operator-context-card">
               <div className="conversation-row">
-                <p className="eyebrow">Queue summary</p>
+                <p className="eyebrow">Queue health</p>
                 <span className="subtle-pill">Phase 02</span>
               </div>
-              <dl className="flag-list">
+              <dl className="flag-list operator-flag-list">
                 <div>
                   <dt>Needs reply</dt>
                   <dd>{workspace.summary.needsReplyCount}</dd>
@@ -1129,79 +1365,71 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               </dl>
             </div>
 
-            <dl className="flag-list">
-              <div>
-                <dt>AI</dt>
-                <dd>{String(flags.ENABLE_AI)}</dd>
+            <div className="stack-card context-summary-card operator-context-card">
+              <div className="conversation-row">
+                <p className="eyebrow">Automation status</p>
+                <span className="subtle-pill">Runtime</span>
               </div>
-              <div>
-                <dt>Automation</dt>
-                <dd>{String(flags.ENABLE_AUTOMATION)}</dd>
-              </div>
-              <div>
-                <dt>Real browser sync</dt>
-                <dd>{String(flags.ENABLE_REAL_BROWSER_SYNC)}</dd>
-              </div>
-              <div>
-                <dt>Real send</dt>
-                <dd>{String(flags.ENABLE_REAL_SEND)}</dd>
-              </div>
-            </dl>
+              <dl className="flag-list operator-flag-list">
+                <div>
+                  <dt>AI</dt>
+                  <dd>{String(flags.ENABLE_AI)}</dd>
+                </div>
+                <div>
+                  <dt>Automation</dt>
+                  <dd>{String(flags.ENABLE_AUTOMATION)}</dd>
+                </div>
+                <div>
+                  <dt>Browser sync</dt>
+                  <dd>{String(flags.ENABLE_REAL_BROWSER_SYNC)}</dd>
+                </div>
+                <div>
+                  <dt>Real send</dt>
+                  <dd>{String(flags.ENABLE_REAL_SEND)}</dd>
+                </div>
+              </dl>
+            </div>
 
-            <div className="stack-card">
-              <p className="eyebrow">LinkedIn Connection</p>
-              {state.browserSession ? (
+            {state.browserSession ? (
+              <div className="stack-card context-summary-card operator-context-card">
+                <div className="conversation-row">
+                  <p className="eyebrow">LinkedIn session</p>
+                  <span className="subtle-pill">Saved</span>
+                </div>
                 <div className="sync-session-summary" aria-label="Saved browser session">
                   <p>{state.browserSession.statusLabel}</p>
                   <p className="conversation-meta">{state.browserSession.accountId}</p>
                   <p className="conversation-meta">Captured {state.browserSession.capturedAtLabel}</p>
                   <p className="conversation-meta">{state.browserSession.userAgentLabel}</p>
                 </div>
-              ) : (
-                <p className="stack-copy">No saved LinkedIn connection yet. Capture one before running a real browser sync.</p>
-              )}
-              <label className="draft-goal-field">
-                <span>Account ID</span>
-                <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
-              </label>
-              <button className="accent-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
-                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
-              </button>
-              {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
-              {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
-            </div>
-
-            <div className="stack-card">
-              <div className="conversation-row">
-                <p className="eyebrow">Sync in Progress</p>
-                <button className="ghost-button" type="button" onClick={() => window.location.reload()}>
-                  Refresh
-                </button>
               </div>
-              {state.activeSyncJob ? (
-                <>
-                  <p>{state.activeSyncJob.statusLabel}</p>
-                  <p className="conversation-meta">{state.activeSyncJob.accountId} · {state.activeSyncJob.provider}</p>
-                  <p className="conversation-meta">Updated {state.activeSyncJob.relativeUpdatedAt}</p>
-                  <p className="conversation-meta">Audit entries: {state.activeSyncJob.auditCount}</p>
-                  {state.activeSyncJob.operatorMessage ? <p className="stack-copy">{state.activeSyncJob.operatorMessage}</p> : null}
-                  {state.activeSyncJob.lastError ? <p className="generated-draft-error">{state.activeSyncJob.lastError}</p> : null}
-                </>
-              ) : (
-                <p className="stack-copy">No queued or running sync jobs.</p>
-              )}
-            </div>
+            ) : null}
 
-            <div className="stack-card">
-              <div className="conversation-row">
-                <p className="eyebrow">Sync History</p>
-                <span className="subtle-pill">{state.syncRuns.length}</span>
+            {state.activeSyncJob ? (
+              <div className="stack-card context-summary-card operator-context-card">
+                <div className="conversation-row">
+                  <p className="eyebrow">Sync in progress</p>
+                  <span className="subtle-pill">Live</span>
+                </div>
+                <p>{state.activeSyncJob.statusLabel}</p>
+                <p className="conversation-meta">
+                  {state.activeSyncJob.accountId} · {state.activeSyncJob.provider}
+                </p>
+                <p className="conversation-meta">Updated {state.activeSyncJob.relativeUpdatedAt}</p>
+                <p className="conversation-meta">Audit entries: {state.activeSyncJob.auditCount}</p>
+                {state.activeSyncJob.operatorMessage ? <p className="stack-copy">{state.activeSyncJob.operatorMessage}</p> : null}
+                {state.activeSyncJob.lastError ? <p className="generated-draft-error">{state.activeSyncJob.lastError}</p> : null}
               </div>
-              {state.syncRuns.length === 0 ? (
-                <p className="stack-copy">No sync runs recorded yet.</p>
-              ) : (
+            ) : null}
+
+            {state.syncRuns.length > 0 ? (
+              <div className="stack-card context-summary-card operator-context-card">
+                <div className="conversation-row">
+                  <p className="eyebrow">Recent sync runs</p>
+                  <span className="subtle-pill">{state.syncRuns.length}</span>
+                </div>
                 <div className="sync-run-list" aria-label="Sync history">
-                  {state.syncRuns.map((syncRun) => (
+                  {state.syncRuns.slice(0, 3).map((syncRun) => (
                     <article key={syncRun.id} className="draft-card">
                       <div className="conversation-row">
                         <strong>{syncRun.statusLabel}</strong>
@@ -1215,122 +1443,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                     </article>
                   ))}
                 </div>
-              )}
-            </div>
-
-            <div className="stack-card">
-              <div className="conversation-row">
-                <p className="eyebrow">Settings</p>
-                <span className="subtle-pill">Workspace</span>
               </div>
-              <div className="stack-copy" aria-label="Settings operator guidance">
-                Export creates a workspace snapshot without secrets. Restore expects a valid snapshot payload. Use Reset secret when a stored token should be cleared on the next save.
-              </div>
-              <div className="settings-list" aria-label="Workspace settings">
-                {state.settings.map((entry) => (
-                  <div key={entry.key} className="draft-goal-field">
-                    <span>{entry.key}</span>
-                    <input
-                      aria-label={entry.key}
-                      type={entry.isSecret ? 'password' : 'text'}
-                      placeholder={entry.redactedValue ?? ''}
-                      value={settingsValues[entry.key] ?? ''}
-                      disabled={Boolean(settingsReset[entry.key])}
-                      onChange={(event) => {
-                        const nextValue = event.target.value;
-                        setSettingsValues((current) => ({
-                          ...current,
-                          [entry.key]: nextValue
-                        }));
-
-                        if (entry.isSecret && nextValue.length > 0) {
-                          setSettingsReset((current) => ({
-                            ...current,
-                            [entry.key]: false
-                          }));
-                        }
-                      }}
-                    />
-                    {entry.isSecret ? (
-                      <div className="quick-action-row">
-                        <button
-                          className="ghost-button"
-                          type="button"
-                          onClick={() => {
-                            setSettingsValues((current) => ({
-                              ...current,
-                              [entry.key]: ''
-                            }));
-                            setSettingsReset((current) => ({
-                              ...current,
-                              [entry.key]: !current[entry.key]
-                            }));
-                          }}
-                        >
-                          {settingsReset[entry.key] ? 'Keep secret' : 'Reset secret'}
-                        </button>
-                        {settingsReset[entry.key] ? <span className="conversation-meta">Secret will be cleared on save</span> : <span className="conversation-meta">Leave blank to keep the stored secret</span>}
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-              <div className="quick-action-row">
-                <button className="accent-button" type="button" onClick={handleSaveSettings} disabled={isSavingSettings}>
-                  {isSavingSettings ? 'Saving...' : 'Save settings'}
-                </button>
-                <button className="ghost-button" type="button" onClick={handleExportBackup}>
-                  Export Workspace Data
-                </button>
-              </div>
-              <label className="draft-goal-field">
-                <span>Restore workspace payload</span>
-                <textarea value={backupPayload} onChange={(event) => setBackupPayload(event.target.value)} rows={8} />
-              </label>
-              {restorePreview ? (
-                <div className="stack-card" aria-label="Restore payload preview">
-                  <p className="eyebrow">Restore preview</p>
-                  <p className="stack-copy">
-                    Scope: <strong>{restorePreview.scope}</strong> · Mode: <strong>{restorePreview.mode}</strong> · Settings: <strong>{restorePreview.settingsCount}</strong> · Secret entries: <strong>{restorePreview.secretCount}</strong>
-                  </p>
-                  {restorePreview.workspaceCounts.length > 0 ? (
-                    <dl className="flag-list">
-                      {restorePreview.workspaceCounts.map((entry) => (
-                        <div key={entry.label}>
-                          <dt>{entry.label}</dt>
-                          <dd>{entry.count}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  ) : null}
-                  <p className="stack-copy">
-                    Review scope, mode, and record counts before restore. Replace overwrites current workspace data; merge keeps existing rows and upserts matching ids.
-                  </p>
-                </div>
-              ) : backupPayload.trim() ? (
-                <p className="generated-draft-error">Restore preview unavailable until the payload is valid JSON</p>
-              ) : null}
-              <label className="draft-goal-field">
-                <span>Workspace replace confirmation</span>
-                <input
-                  aria-label="Workspace replace confirmation"
-                  type="text"
-                  placeholder={WORKSPACE_REPLACE_CONFIRMATION}
-                  value={restoreConfirmation}
-                  onChange={(event) => setRestoreConfirmation(event.target.value)}
-                />
-              </label>
-              <p className="stack-copy">
-                Workspace restore with <strong>replace</strong> overwrites contacts, conversations, messages, drafts, jobs, sync runs, audit log, and settings. Type {WORKSPACE_REPLACE_CONFIRMATION} before running that restore mode.
-              </p>
-              <button className="ghost-button" type="button" onClick={handleImportBackup} disabled={!backupPayload.trim()}>
-                Restore Workspace Data
-              </button>
-              {settingsMessage ? <p className="generated-draft-preview">{settingsMessage}</p> : null}
-              {settingsError ? <p className="generated-draft-error">{settingsError}</p> : null}
-            </div>
+            ) : null}
           </aside>
         </div>
+
       </div>
       <BulkDraftModal
         isOpen={isBulkModalOpen}
@@ -1341,6 +1458,13 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           setIsBulkModalOpen(false);
           clearConversationSelection();
         }}
+      />
+      <DeleteIgnoreModal
+        isOpen={ignoreTarget !== null}
+        contactId={ignoreTarget?.contactId ?? null}
+        contactName={ignoreTarget?.contactName ?? 'this person'}
+        onClose={() => setIgnoreTarget(null)}
+        onSuccess={handleIgnoreSuccess}
       />
       <ReminderModal
         open={isReminderModalOpen}
@@ -1413,7 +1537,8 @@ function getRestorePreview(payload: string) {
 
 function EmptyState({ title, body }: { title: string; body: string }) {
   return (
-    <div className="state-card" data-state="empty">
+    <div className="state-card inbox-state-card" data-state="empty">
+      <p className="eyebrow">Workspace state</p>
       <h3>{title}</h3>
       <p>{body}</p>
     </div>
@@ -1422,7 +1547,8 @@ function EmptyState({ title, body }: { title: string; body: string }) {
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <div className="state-card error" data-state="error">
+    <div className="state-card error inbox-state-card inbox-state-card-error" data-state="error">
+      <p className="eyebrow">Attention needed</p>
       <h3>Unable to load workspace</h3>
       <p>{message}</p>
     </div>

@@ -1,4 +1,5 @@
 import {
+  campaignStatuses,
   draftStatuses,
   jobStatuses,
   jobTypes,
@@ -99,6 +100,37 @@ export const reminders = sqliteTable(
   (table) => [
     index('reminders_entity_idx').on(table.entityType, table.entityId),
     index('reminders_status_due_at_idx').on(table.status, table.dueAt)
+  ]
+);
+
+export const campaigns = sqliteTable(
+  'campaigns',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    objective: text('objective').notNull(),
+    status: text('status', { enum: campaignStatuses }).notNull().default('draft'),
+    defaultPrompt: text('default_prompt'),
+    tags: text('tags').notNull().default('[]'),
+    ...timestamps
+  },
+  (table) => [
+    index('campaigns_status_idx').on(table.status),
+    index('campaigns_updated_at_idx').on(table.updatedAt)
+  ]
+);
+
+export const campaignTargets = sqliteTable(
+  'campaign_targets',
+  {
+    id: text('id').primaryKey(),
+    campaignId: text('campaign_id').notNull().references(() => campaigns.id, { onDelete: 'cascade' }),
+    contactId: text('contact_id').notNull().references(() => contacts.id, { onDelete: 'cascade' }),
+    createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`)
+  },
+  (table) => [
+    uniqueIndex('campaign_targets_campaign_contact_idx').on(table.campaignId, table.contactId),
+    index('campaign_targets_contact_id_idx').on(table.contactId)
   ]
 );
 
@@ -217,6 +249,22 @@ export const auditLog = sqliteTable('audit_log', {
   createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`)
 });
 
+export const syncSuppressions = sqliteTable(
+  'sync_suppressions',
+  {
+    id: text('id').primaryKey(),
+    contactId: text('contact_id').references(() => contacts.id, { onDelete: 'cascade' }),
+    linkedinProfileId: text('linkedin_profile_id').notNull(),
+    reason: text('reason'),
+    createdAt: integer('created_at').notNull().default(sql`(unixepoch() * 1000)`),
+    deletedAt: integer('deleted_at')
+  },
+  (table) => [
+    uniqueIndex('sync_suppressions_linkedin_profile_id_idx').on(table.linkedinProfileId),
+    index('sync_suppressions_contact_id_idx').on(table.contactId)
+  ]
+);
+
 export const accountsRelations = relations(accounts, ({ one, many }) => ({
   mergedInto: one(accounts, {
     fields: [accounts.mergedIntoAccountId],
@@ -235,7 +283,24 @@ export const accountAliasesRelations = relations(accountAliases, ({ one }) => ({
 
 export const contactsRelations = relations(contacts, ({ many }) => ({
   conversations: many(conversations),
-  drafts: many(drafts)
+  drafts: many(drafts),
+  campaignTargets: many(campaignTargets),
+  suppressions: many(syncSuppressions)
+}));
+
+export const campaignsRelations = relations(campaigns, ({ many }) => ({
+  targets: many(campaignTargets)
+}));
+
+export const campaignTargetsRelations = relations(campaignTargets, ({ one }) => ({
+  campaign: one(campaigns, {
+    fields: [campaignTargets.campaignId],
+    references: [campaigns.id]
+  }),
+  contact: one(contacts, {
+    fields: [campaignTargets.contactId],
+    references: [contacts.id]
+  })
 }));
 
 export const conversationsRelations = relations(conversations, ({ one, many }) => ({
@@ -276,6 +341,8 @@ export const draftVariantsRelations = relations(draftVariants, ({ one }) => ({
 export const allTables = {
   accounts,
   accountAliases,
+  campaigns,
+  campaignTargets,
   contacts,
   conversations,
   messages,
@@ -284,5 +351,6 @@ export const allTables = {
   jobs,
   syncRuns,
   settings,
+  syncSuppressions,
   auditLog
 };

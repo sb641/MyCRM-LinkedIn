@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import { createNodeDb } from './server/node-sqlite';
-import { createAccountRepository, createJobRepository, createReminderRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
-import { accounts, accountAliases, contacts, conversations, drafts, messages } from './schema';
+import { createAccountRepository, createCampaignRepository, createJobRepository, createMutationRepository, createReminderRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
+import { accounts, accountAliases, campaigns, contacts, conversations, drafts, messages, reminders } from './schema';
 import { buildSeedData } from './seed-data';
 
 function createTempDbPath(name: string) {
@@ -41,6 +41,7 @@ describe('Phase 1 schema', () => {
     const { db, sqlite } = await migrateDb(databaseUrl);
     const seed = buildSeedData();
 
+    await db.insert(accounts).values(seed.accounts.slice(0, 1));
     await db.insert(contacts).values(seed.contacts.slice(0, 1));
     await db.insert(conversations).values(seed.conversations.slice(0, 1));
     await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
@@ -75,6 +76,7 @@ describe('Phase 1 schema', () => {
     const { db, sqlite } = await migrateDb(databaseUrl);
     const seed = buildSeedData();
 
+    await db.insert(accounts).values(seed.accounts);
     await db.insert(contacts).values(seed.contacts);
     await db.insert(conversations).values(seed.conversations);
     await db.insert(messages).values(seed.messages);
@@ -94,6 +96,7 @@ describe('Phase 1 schema', () => {
     const { db, sqlite } = await migrateDb(databaseUrl);
     const seed = buildSeedData();
 
+    await db.insert(accounts).values(seed.accounts.slice(0, 1));
     await db.insert(contacts).values(seed.contacts.slice(0, 1));
     await db.insert(conversations).values(seed.conversations.slice(0, 1));
     await db.insert(drafts)
@@ -250,6 +253,59 @@ describe('Phase 1 schema', () => {
     }
   });
 
+  it('ignores and restores a contact with suppression state', async () => {
+    const databaseUrl = `file:${createTempDbPath('sync-suppressions-ignore-restore')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 1));
+      await db.insert(contacts).values(seed.contacts.slice(0, 1));
+      await db.insert(conversations).values(seed.conversations.slice(0, 1));
+      await db.insert(drafts).values(seed.drafts.slice(0, 1));
+
+      const repository = createMutationRepository(db, sqlite);
+      await repository.ignoreContact(seed.contacts[0].id, 'user requested', true);
+
+      const suppressions = await repository.listSyncSuppressions();
+      const [storedContactAfterIgnore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM contacts WHERE id = '${seed.contacts[0].id}'`
+      );
+      const [storedConversationAfterIgnore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM conversations WHERE id = '${seed.conversations[0].id}'`
+      );
+      const [storedDraftAfterIgnore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM drafts WHERE id = '${seed.drafts[0].id}'`
+      );
+
+      expect(suppressions).toHaveLength(1);
+      expect(suppressions[0]?.contactId).toBe(seed.contacts[0].id);
+      expect(storedContactAfterIgnore?.deleted_at).not.toBeNull();
+      expect(storedConversationAfterIgnore?.deleted_at).not.toBeNull();
+      expect(storedDraftAfterIgnore?.deleted_at).not.toBeNull();
+
+      await repository.restoreSuppression(suppressions[0]!.id);
+
+      const remainingSuppressions = await repository.listSyncSuppressions();
+      const [storedContactAfterRestore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM contacts WHERE id = '${seed.contacts[0].id}'`
+      );
+      const [storedConversationAfterRestore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM conversations WHERE id = '${seed.conversations[0].id}'`
+      );
+      const [storedDraftAfterRestore] = await sqlite.all<{ deleted_at: number | null }>(
+        `SELECT deleted_at FROM drafts WHERE id = '${seed.drafts[0].id}'`
+      );
+
+      expect(remainingSuppressions).toEqual([]);
+      expect(storedContactAfterRestore?.deleted_at).toBeNull();
+      expect(storedConversationAfterRestore?.deleted_at).toBeNull();
+      expect(storedDraftAfterRestore?.deleted_at).toBeNull();
+    } finally {
+      await sqlite.close();
+    }
+  });
+
   it('stores secrets outside the settings table and returns redacted values by default', async () => {
     const databaseUrl = `file:${createTempDbPath('settings-secrets')}`;
     const { db, sqlite } = await migrateDb(databaseUrl);
@@ -282,6 +338,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts);
       await db.insert(contacts).values(seed.contacts);
       await db.insert(conversations).values(seed.conversations);
       await db.insert(messages).values(seed.messages);
@@ -296,10 +353,11 @@ describe('Phase 1 schema', () => {
       const snapshot = await repository.exportWorkspace(false);
 
       expect(snapshot.scope).toBe('workspace');
-      expect(snapshot.data.accounts).toEqual([]);
+      expect(snapshot.data.accounts.length).toBe(seed.accounts.length);
       expect(snapshot.data.accountAliases).toEqual([]);
       expect(snapshot.data.contacts.length).toBeGreaterThan(0);
       expect(snapshot.data.conversations.length).toBeGreaterThan(0);
+      expect(snapshot.data.syncSuppressions).toEqual([]);
       expect(snapshot.settings.length).toBeGreaterThan(0);
       expect(snapshot.settings.find((entry) => entry.key === 'gemini_api_key')?.value).toBe('');
     } finally {
@@ -313,6 +371,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 2));
       await db.insert(contacts).values(seed.contacts.slice(0, 2));
       await db.insert(conversations).values(seed.conversations.slice(0, 2));
       await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 2));
@@ -327,7 +386,7 @@ describe('Phase 1 schema', () => {
         mode: 'replace',
         settings: [{ key: 'followup_days', value: '14', isSecret: false }],
         data: {
-          accounts: [],
+          accounts: [seed.accounts[5]],
           accountAliases: [],
           contacts: [seed.contacts[5]],
           conversations: [seed.conversations[5]],
@@ -336,6 +395,7 @@ describe('Phase 1 schema', () => {
           draftVariants: [],
           jobs: [],
           syncRuns: [],
+          syncSuppressions: [],
           auditLog: []
         }
       });
@@ -358,6 +418,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 2));
       await db.insert(contacts).values(seed.contacts.slice(0, 1));
       await db.insert(conversations).values(seed.conversations.slice(0, 1));
       await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
@@ -380,6 +441,7 @@ describe('Phase 1 schema', () => {
           draftVariants: [],
           jobs: [],
           syncRuns: [],
+          syncSuppressions: [],
           auditLog: []
         }
       });
@@ -470,6 +532,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 3));
       await db.insert(contacts).values(seed.contacts.slice(0, 1));
       await db.insert(conversations).values(seed.conversations.slice(0, 1));
       await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
@@ -486,7 +549,7 @@ describe('Phase 1 schema', () => {
         mode: 'replace',
         settings: [{ key: 'followup_days', value: '21', isSecret: false }],
         data: {
-          accounts: [],
+          accounts: [seed.accounts[2]],
           accountAliases: [],
           contacts: [seed.contacts[2]],
           conversations: [seed.conversations[2]],
@@ -514,6 +577,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 4));
       await db.insert(contacts).values(seed.contacts.slice(0, 1));
       await db.insert(conversations).values(seed.conversations.slice(0, 1));
       await db.insert(messages).values(seed.messages.filter((message) => message.conversationId === seed.conversations[0].id).slice(0, 1));
@@ -532,6 +596,8 @@ describe('Phase 1 schema', () => {
         data: {
           accounts: [],
           accountAliases: [],
+          campaigns: [],
+          campaignTargets: [],
           reminders: [],
           contacts: [seed.contacts[3]],
           conversations: [seed.conversations[3]],
@@ -559,6 +625,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 2));
       await db.insert(contacts).values(seed.contacts.slice(0, 2));
 
       const repository = createAccountRepository(db, sqlite);
@@ -596,6 +663,7 @@ describe('Phase 1 schema', () => {
     const seed = buildSeedData();
 
     try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 2));
       await db.insert(contacts).values(seed.contacts.slice(0, 2));
       await db.insert(accounts).values([
         {
@@ -686,6 +754,63 @@ describe('Phase 1 schema', () => {
         `SELECT next_reminder_at FROM contacts WHERE id = '${seed.contacts[0].id}' LIMIT 1`
       );
       expect(clearedContactRow?.next_reminder_at).toBeNull();
+    } finally {
+      await sqlite.close();
+    }
+  });
+
+  it('creates campaigns, assigns targets, and derives activity from drafts reminders and audit data', async () => {
+    const databaseUrl = `file:${createTempDbPath('campaigns-lifecycle')}`;
+    const { db, sqlite } = await migrateDb(databaseUrl);
+    const seed = buildSeedData();
+
+    try {
+      await db.insert(accounts).values(seed.accounts.slice(0, 2));
+      await db.insert(contacts).values(seed.contacts.slice(0, 2));
+      await db.insert(conversations).values(seed.conversations.slice(0, 2));
+      await db.insert(drafts).values(seed.drafts.slice(0, 2));
+
+      const repository = createCampaignRepository(db, sqlite);
+      const created = await repository.createCampaign({
+        name: 'Q2 Expansion',
+        objective: 'Book intro calls with expansion stakeholders',
+        status: 'draft',
+        defaultPrompt: 'Focus on expansion pain points.',
+        tags: ['expansion', 'q2']
+      });
+
+      expect(created?.campaign.name).toBe('Q2 Expansion');
+      expect(created?.campaign.tags).toEqual(['expansion', 'q2']);
+
+      const withTargets = await repository.addTargets(created!.campaign.id, {
+        contactIds: [seed.contacts[0].id, seed.contacts[1].id]
+      });
+
+      expect(withTargets?.targets).toHaveLength(2);
+
+      await db.insert(reminders).values({
+        id: 'reminder-campaign-001',
+        entityType: 'campaign',
+        entityId: created!.campaign.id,
+        status: 'due_today',
+        ruleType: 'manual',
+        dueAt: Date.now() + 60 * 60 * 1000,
+        completedAt: null,
+        note: 'Review campaign progress',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+
+      const detail = await repository.findCampaignById(created!.campaign.id);
+      expect(detail?.targets).toHaveLength(2);
+      expect(detail?.drafts.length).toBeGreaterThan(0);
+      expect(detail?.reminders.some((reminder) => reminder.entityId === created!.campaign.id)).toBe(true);
+      expect(detail?.activity.some((item) => item.type === 'audit')).toBe(true);
+      expect(detail?.activity.some((item) => item.type === 'draft')).toBe(true);
+      expect(detail?.activity.some((item) => item.type === 'reminder')).toBe(true);
+
+      const listed = await repository.listCampaigns();
+      expect(listed.some((campaign) => campaign.id === created!.campaign.id && campaign.targetCount === 2)).toBe(true);
     } finally {
       await sqlite.close();
     }

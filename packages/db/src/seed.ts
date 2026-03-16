@@ -11,25 +11,35 @@ import {
   jobs,
   messages,
   settings,
-  syncRuns
+  syncRuns,
+  syncSuppressions
 } from './schema';
 import { buildSeedData } from './seed-data';
+
+async function insertIfAny<T>(operation: { values: (rows: T[]) => Promise<unknown> }, rows: T[]) {
+  if (rows.length === 0) {
+    return;
+  }
+
+  await operation.values(rows);
+}
 
 export async function seedDatabase(databaseUrl?: string) {
   const { db, sqlite } = await createNodeDb(databaseUrl ?? getEnv().DATABASE_URL);
   const seed = buildSeedData();
 
-  await db.insert(accounts).values(seed.accounts);
-  await db.insert(accountAliases).values(seed.accountAliases);
-  await db.insert(contacts).values(seed.contacts);
-  await db.insert(conversations).values(seed.conversations);
-  await db.insert(messages).values(seed.messages);
-  await db.insert(drafts).values(seed.drafts);
-  await db.insert(draftVariants).values(seed.draftVariants);
-  await db.insert(jobs).values(seed.jobs);
-  await db.insert(syncRuns).values(seed.syncRuns);
-  await db.insert(settings).values(seed.settings);
-  await db.insert(auditLog).values(seed.auditLog);
+  await insertIfAny(db.insert(accounts), seed.accounts);
+  await insertIfAny(db.insert(accountAliases), seed.accountAliases);
+  await insertIfAny(db.insert(contacts), seed.contacts);
+  await insertIfAny(db.insert(conversations), seed.conversations);
+  await insertIfAny(db.insert(messages), seed.messages);
+  await insertIfAny(db.insert(drafts), seed.drafts);
+  await insertIfAny(db.insert(draftVariants), seed.draftVariants);
+  await insertIfAny(db.insert(jobs), seed.jobs);
+  await insertIfAny(db.insert(syncRuns), seed.syncRuns);
+  await insertIfAny(db.insert(syncSuppressions), seed.syncSuppressions);
+  await insertIfAny(db.insert(settings), seed.settings);
+  await insertIfAny(db.insert(auditLog), seed.auditLog);
 
   await sqlite.exec('SELECT 1');
 

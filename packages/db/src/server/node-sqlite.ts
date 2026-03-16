@@ -24,6 +24,23 @@ function resolveMigrationPath() {
 
 const migrationSql = fs.readFileSync(resolveMigrationPath(), 'utf8');
 
+const phase01Tables = [
+  'accounts',
+  'account_aliases',
+  'contacts',
+  'reminders',
+  'campaigns',
+  'campaign_targets',
+  'conversations',
+  'messages',
+  'drafts',
+  'draft_variants',
+  'jobs',
+  'sync_runs',
+  'settings',
+  'audit_log'
+] as const;
+
 export type NodeSqliteConnection = {
   database: DatabaseSync;
   filePath?: string;
@@ -105,6 +122,14 @@ function selectAll<T>(database: DatabaseSync, queryText: string) {
   return database.prepare(queryText).all() as T[];
 }
 
+function hasTable(database: DatabaseSync, tableName: string) {
+  const row = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName) as { name?: string } | undefined;
+
+  return row?.name === tableName;
+}
+
 function hasColumn(database: DatabaseSync, tableName: string, columnName: string) {
   const columns = database.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>;
   return columns.some((column) => column.name === columnName);
@@ -127,16 +152,38 @@ function ensurePhase02Schema(database: DatabaseSync) {
   ensureColumn(database, 'drafts', 'deleted_at', 'INTEGER');
 }
 
-function ensureSchema(database: DatabaseSync) {
+function ensureSyncSuppressionsTable(database: DatabaseSync) {
   const row = database
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'jobs'")
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sync_suppressions'")
     .get() as { name?: string } | undefined;
 
   if (!row?.name) {
+    database.exec(`
+      CREATE TABLE sync_suppressions (
+        id TEXT PRIMARY KEY,
+        contact_id TEXT REFERENCES contacts(id) ON DELETE CASCADE,
+        linkedin_profile_id TEXT NOT NULL,
+        reason TEXT,
+        created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+        deleted_at INTEGER
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS sync_suppressions_linkedin_profile_id_idx
+        ON sync_suppressions(linkedin_profile_id);
+      CREATE INDEX IF NOT EXISTS sync_suppressions_contact_id_idx
+        ON sync_suppressions(contact_id);
+    `);
+  }
+}
+
+function ensureSchema(database: DatabaseSync) {
+  const missingPhase01Table = phase01Tables.some((tableName) => !hasTable(database, tableName));
+
+  if (missingPhase01Table) {
     database.exec(migrationSql);
   }
 
   ensurePhase02Schema(database);
+  ensureSyncSuppressionsTable(database);
 }
 
 export async function createNodeSqliteConnection(databaseUrl = getEnv().DATABASE_URL): Promise<NodeSqliteConnection> {
@@ -161,7 +208,7 @@ export async function createNodeSqliteConnection(databaseUrl = getEnv().DATABASE
   };
 }
 
-export async function createNodeDb(databaseUrl: string) {
+export async function createNodeDb(databaseUrl = getEnv().DATABASE_URL) {
   const sqlite = await createNodeSqliteConnection(databaseUrl);
   const db = drizzle(async (queryText, params, method) => {
     sqlite.database.exec('PRAGMA foreign_keys = ON');

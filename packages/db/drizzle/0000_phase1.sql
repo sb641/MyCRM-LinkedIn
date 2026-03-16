@@ -62,6 +62,30 @@ CREATE TABLE `reminders` (
 CREATE INDEX `reminders_entity_idx` ON `reminders` (`entity_type`, `entity_id`);
 CREATE INDEX `reminders_status_due_at_idx` ON `reminders` (`status`, `due_at`);
 
+CREATE TABLE `campaigns` (
+  `id` text PRIMARY KEY NOT NULL,
+  `name` text NOT NULL,
+  `objective` text NOT NULL,
+  `status` text NOT NULL DEFAULT 'draft',
+  `default_prompt` text,
+  `tags` text NOT NULL DEFAULT '[]',
+  `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  `updated_at` integer NOT NULL DEFAULT (unixepoch() * 1000)
+);
+CREATE INDEX `campaigns_status_idx` ON `campaigns` (`status`);
+CREATE INDEX `campaigns_updated_at_idx` ON `campaigns` (`updated_at`);
+
+CREATE TABLE `campaign_targets` (
+  `id` text PRIMARY KEY NOT NULL,
+  `campaign_id` text NOT NULL,
+  `contact_id` text NOT NULL,
+  `created_at` integer NOT NULL DEFAULT (unixepoch() * 1000),
+  FOREIGN KEY (`campaign_id`) REFERENCES `campaigns`(`id`) ON DELETE cascade,
+  FOREIGN KEY (`contact_id`) REFERENCES `contacts`(`id`) ON DELETE cascade
+);
+CREATE UNIQUE INDEX `campaign_targets_campaign_contact_idx` ON `campaign_targets` (`campaign_id`, `contact_id`);
+CREATE INDEX `campaign_targets_contact_id_idx` ON `campaign_targets` (`contact_id`);
+
 CREATE TABLE `conversations` (
   `id` text PRIMARY KEY NOT NULL,
   `contact_id` text NOT NULL,

@@ -59,8 +59,14 @@ export function buildInboxWorkspaceViewModel(
     state.selectedItem ??
     visibleItems[0] ??
     null;
+  const requestedAccount = state.accountDetails
+    ? state.accounts.find((account) => account.id === state.accountDetails?.account.id) ?? null
+    : null;
   const selectedAccount =
-    visibleAccounts.find((account) => account.id === state.accountDetails?.account.id) ?? visibleAccounts[0] ?? null;
+    visibleAccounts.find((account) => account.id === state.accountDetails?.account.id) ??
+    requestedAccount ??
+    visibleAccounts[0] ??
+    null;
 
   return {
     queueTabs: buildQueueTabs(state.inbox, activeQueue),

@@ -73,10 +73,10 @@ This phase adds soft-delete and sync suppression flows so ignored people stay ig
 - use `deletedAt` fields added earlier
 
 ## Implementation Checklist
-- [ ] Start by updating TODOs and marking Phase 08 as in progress.
-- [ ] Mark Phase 08 as in progress in the active TODO list.
-- [ ] Verify reusable delete, settings, and importer surfaces.
-- [ ] Add suppression schema and repository support.
+- [x] Start by updating TODOs and marking Phase 08 as in progress.
+- [x] Mark Phase 08 as in progress in the active TODO list.
+- [x] Verify reusable delete, settings, and importer surfaces.
+- [x] Add suppression schema and repository support.
 - [ ] Add ignore and restore APIs.
 - [ ] Build confirmation modal and ignored people settings panel.
 - [ ] Wire ignore entry points from queue, thread, context, and draft surfaces.

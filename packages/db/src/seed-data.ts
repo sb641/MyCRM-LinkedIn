@@ -187,6 +187,7 @@ export function buildSeedData() {
     draftVariants,
     jobs,
     syncRuns,
+    syncSuppressions: [],
     settings,
     auditLog
   };

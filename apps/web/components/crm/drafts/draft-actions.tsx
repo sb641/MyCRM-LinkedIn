@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { DeleteIgnoreModal } from '@/components/crm/modals/delete-ignore-modal';
 
 type DraftActionsProps = {
   draftId: string;
@@ -9,6 +10,8 @@ type DraftActionsProps = {
   goalText: string;
   conversationId: string;
   accountId: string;
+  contactId: string;
+  contactName: string;
   provider?: string;
   onSuccess?: () => void;
 };
@@ -20,6 +23,8 @@ export function DraftActions({
   goalText,
   conversationId,
   accountId,
+  contactId,
+  contactName,
   provider = 'linkedin-browser',
   onSuccess
 }: DraftActionsProps) {
@@ -28,6 +33,7 @@ export function DraftActions({
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isIgnoreModalOpen, setIsIgnoreModalOpen] = useState(false);
 
   async function handleApprove() {
     setMessage(null);
@@ -103,12 +109,22 @@ export function DraftActions({
             {isApproving ? 'Approving...' : 'Approve'}
           </button>
         ) : null}
+        <button className="ghost-button" type="button" onClick={() => setIsIgnoreModalOpen(true)}>
+          Ignore Person
+        </button>
         <button className="accent-button" type="button" onClick={handleSend} disabled={isSending || draftStatus !== 'approved'}>
           {isSending ? 'Sending...' : 'Send'}
         </button>
       </div>
       {message ? <p className="generated-draft-preview">{message}</p> : null}
       {error ? <p className="generated-draft-error">{error}</p> : null}
+      <DeleteIgnoreModal
+        isOpen={isIgnoreModalOpen}
+        contactId={contactId}
+        contactName={contactName}
+        onClose={() => setIsIgnoreModalOpen(false)}
+        onSuccess={onSuccess}
+      />
     </div>
   );
 }

@@ -194,7 +194,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
         throw new Error(body.message ?? 'Unable to queue send');
       }
 
-      setSendMessage(`Queued send job ${body.jobId}`);
+      setSendMessage(`Queued send for ${body.jobId}`);
     } catch (error) {
       setSendError(error instanceof Error ? error.message : 'Unable to queue send');
     } finally {

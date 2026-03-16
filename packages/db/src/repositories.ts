@@ -1,10 +1,17 @@
 import { sql } from 'drizzle-orm';
+import { NotFoundError } from '@mycrm/core';
 import type { NodeDatabaseClient, NodeSqliteConnection } from './server/node-sqlite';
-import { accountAliases, accounts, contacts, drafts, reminders } from './schema';
+import { accountAliases, accounts, campaignTargets, campaigns, contacts, drafts, reminders } from './schema';
 import type {
   AccountDetailDto,
   AccountSummaryDto,
+  AddCampaignTargetsInput,
   AssignContactsToAccountInput,
+  CampaignActivityItemDto,
+  CampaignDetailDto,
+  CampaignSummaryDto,
+  CampaignTargetDto,
+  CreateCampaignInput,
   CreateReminderInput,
   JobType,
   MergeAccountsInput,
@@ -14,6 +21,7 @@ import type {
   SendStatus,
   SettingKey,
   SettingValueDto,
+  UpdateCampaignInput,
   UpdateReminderInput,
   WorkspaceBackupSnapshotDto
 } from '@mycrm/core';
@@ -79,6 +87,16 @@ function normalizeWorkspaceRow(
     },
     account_aliases: {
       accountId: 'account_id',
+      createdAt: 'created_at'
+    },
+    campaigns: {
+      defaultPrompt: 'default_prompt',
+      createdAt: 'created_at',
+      updatedAt: 'updated_at'
+    },
+    campaign_targets: {
+      campaignId: 'campaign_id',
+      contactId: 'contact_id',
       createdAt: 'created_at'
     },
     reminders: {
@@ -156,6 +174,12 @@ function normalizeWorkspaceRow(
       itemsScanned: 'items_scanned',
       itemsImported: 'items_imported'
     },
+    sync_suppressions: {
+      contactId: 'contact_id',
+      linkedinProfileId: 'linkedin_profile_id',
+      createdAt: 'created_at',
+      deletedAt: 'deleted_at'
+    },
     audit_log: {
       entityType: 'entity_type',
       entityId: 'entity_id',
@@ -187,7 +211,7 @@ function toSqlLiteral(value: unknown) {
 }
 
 async function replaceTableRows(sqlite: RepositorySqliteConnection, tableName: string, rows: Array<Record<string, unknown>>) {
-  for (const row of rows) {
+  for (const row of rows ?? []) {
     const normalizedRow = normalizeWorkspaceRow(tableName, row);
     const columns = Object.keys(normalizedRow);
     if (columns.length === 0) {
@@ -200,7 +224,7 @@ async function replaceTableRows(sqlite: RepositorySqliteConnection, tableName: s
 }
 
 async function upsertTableRows(sqlite: RepositorySqliteConnection, tableName: string, rows: Array<Record<string, unknown>>) {
-  for (const row of rows) {
+  for (const row of rows ?? []) {
     const normalizedRow = normalizeWorkspaceRow(tableName, row);
     const columns = Object.keys(normalizedRow);
     if (columns.length === 0) {
@@ -353,6 +377,14 @@ function createReminderId() {
   return `reminder-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
+function createCampaignId() {
+  return `campaign-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function createCampaignTargetId() {
+  return `campaign-target-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
 function deriveReminderStatus(dueAt: number, completedAt: number | null, now = Date.now()): ReminderDto['status'] {
   if (completedAt) {
     return 'completed';
@@ -399,6 +431,49 @@ function mapReminderRow(row: {
     dueAt: row.due_at,
     completedAt: row.completed_at,
     note: row.note,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function parseTags(value: string | null | undefined) {
+  if (!value) {
+    return [] as string[];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function mapCampaignSummaryRow(row: {
+  id: string;
+  name: string;
+  objective: string;
+  status: CampaignSummaryDto['status'];
+  default_prompt: string | null;
+  tags: string;
+  targetCount: number;
+  draftCount: number;
+  reminderCount: number;
+  lastActivityAt: number | null;
+  created_at: number;
+  updated_at: number;
+}): CampaignSummaryDto {
+  return {
+    id: row.id,
+    name: row.name,
+    objective: row.objective,
+    status: row.status,
+    defaultPrompt: row.default_prompt,
+    tags: parseTags(row.tags),
+    targetCount: Number(row.targetCount ?? 0),
+    draftCount: Number(row.draftCount ?? 0),
+    reminderCount: Number(row.reminderCount ?? 0),
+    lastActivityAt: row.lastActivityAt ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -868,6 +943,347 @@ export function createReminderRepository(_db: RepositoryDbClient, sqlite: Reposi
   };
 }
 
+export function createCampaignRepository(db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
+  return {
+    async listCampaigns(): Promise<CampaignSummaryDto[]> {
+      const rows = await sqlite.all<{
+        id: string;
+        name: string;
+        objective: string;
+        status: CampaignSummaryDto['status'];
+        default_prompt: string | null;
+        tags: string;
+        targetCount: number;
+        draftCount: number;
+        reminderCount: number;
+        lastActivityAt: number | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT
+          c.id,
+          c.name,
+          c.objective,
+          c.status,
+          c.default_prompt,
+          c.tags,
+          c.created_at,
+          c.updated_at,
+          COUNT(DISTINCT ct.id) AS targetCount,
+          COUNT(DISTINCT d.id) AS draftCount,
+          COUNT(DISTINCT r.id) AS reminderCount,
+          MAX(COALESCE(d.created_at, r.updated_at, a.created_at, c.updated_at)) AS lastActivityAt
+        FROM campaigns c
+        LEFT JOIN campaign_targets ct ON ct.campaign_id = c.id
+        LEFT JOIN drafts d ON d.contact_id = ct.contact_id AND d.deleted_at IS NULL
+        LEFT JOIN reminders r ON r.entity_type = 'campaign' AND r.entity_id = c.id
+        LEFT JOIN audit_log a ON a.entity_type = 'campaign' AND a.entity_id = c.id
+        GROUP BY c.id
+        ORDER BY c.updated_at DESC, c.name ASC
+      `);
+
+      return rows.map(mapCampaignSummaryRow);
+    },
+
+    async findCampaignById(campaignId: string): Promise<CampaignDetailDto | null> {
+      const safeCampaignId = campaignId.replace(/'/g, "''");
+      const [campaignRow] = await sqlite.all<{
+        id: string;
+        name: string;
+        objective: string;
+        status: CampaignSummaryDto['status'];
+        default_prompt: string | null;
+        tags: string;
+        targetCount: number;
+        draftCount: number;
+        reminderCount: number;
+        lastActivityAt: number | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT
+          c.id,
+          c.name,
+          c.objective,
+          c.status,
+          c.default_prompt,
+          c.tags,
+          c.created_at,
+          c.updated_at,
+          COUNT(DISTINCT ct.id) AS targetCount,
+          COUNT(DISTINCT d.id) AS draftCount,
+          COUNT(DISTINCT r.id) AS reminderCount,
+          MAX(COALESCE(d.created_at, r.updated_at, a.created_at, c.updated_at)) AS lastActivityAt
+        FROM campaigns c
+        LEFT JOIN campaign_targets ct ON ct.campaign_id = c.id
+        LEFT JOIN drafts d ON d.contact_id = ct.contact_id AND d.deleted_at IS NULL
+        LEFT JOIN reminders r ON r.entity_type = 'campaign' AND r.entity_id = c.id
+        LEFT JOIN audit_log a ON a.entity_type = 'campaign' AND a.entity_id = c.id
+        WHERE c.id = '${safeCampaignId}'
+        GROUP BY c.id
+        LIMIT 1
+      `);
+
+      if (!campaignRow) {
+        return null;
+      }
+
+      const targets = await sqlite.all<{
+        id: string;
+        campaign_id: string;
+        contact_id: string;
+        created_at: number;
+        contactName: string;
+        company: string | null;
+        headline: string | null;
+        relationshipStatus: RelationshipStatus;
+        nextReminderAt: number | null;
+        lastInteractionAt: number | null;
+      }>(`
+        SELECT
+          ct.id,
+          ct.campaign_id,
+          ct.contact_id,
+          ct.created_at,
+          c.name AS contactName,
+          c.company,
+          c.headline,
+          c.relationship_status AS relationshipStatus,
+          c.next_reminder_at AS nextReminderAt,
+          c.last_interaction_at AS lastInteractionAt
+        FROM campaign_targets ct
+        INNER JOIN contacts c ON c.id = ct.contact_id
+        WHERE ct.campaign_id = '${safeCampaignId}'
+          AND c.deleted_at IS NULL
+        ORDER BY ct.created_at ASC, c.name ASC
+      `);
+
+      const safeContactIds = targets.map((target) => `'${target.contact_id.replace(/'/g, "''")}'`);
+      const contactFilter = safeContactIds.length > 0 ? `WHERE d.contact_id IN (${safeContactIds.join(', ')}) AND d.deleted_at IS NULL` : 'WHERE 1 = 0';
+      const draftsRows = await sqlite.all<{
+        id: string;
+        goalText: string;
+        approvedText: string | null;
+        draftStatus: CampaignDetailDto['drafts'][number]['draftStatus'];
+        sendStatus: CampaignDetailDto['drafts'][number]['sendStatus'];
+        modelName: string | null;
+        approvedAt: number | null;
+        sentAt: number | null;
+        createdAt: number;
+      }>(`
+        SELECT
+          d.id,
+          d.goal_text AS goalText,
+          d.approved_text AS approvedText,
+          d.draft_status AS draftStatus,
+          d.send_status AS sendStatus,
+          d.model_name AS modelName,
+          d.approved_at AS approvedAt,
+          d.sent_at AS sentAt,
+          d.created_at AS createdAt
+        FROM drafts d
+        ${contactFilter}
+        ORDER BY d.created_at DESC
+      `);
+
+      const reminderRows = await sqlite.all<{
+        id: string;
+        entity_type: ReminderDto['entityType'];
+        entity_id: string;
+        status: ReminderDto['status'];
+        rule_type: ReminderDto['ruleType'];
+        due_at: number;
+        completed_at: number | null;
+        note: string | null;
+        created_at: number;
+        updated_at: number;
+      }>(`
+        SELECT id, entity_type, entity_id, status, rule_type, due_at, completed_at, note, created_at, updated_at
+        FROM reminders
+        WHERE entity_type = 'campaign'
+          AND entity_id = '${safeCampaignId}'
+        ORDER BY due_at ASC, created_at DESC
+      `);
+
+      const auditRows = await sqlite.all<{
+        id: string;
+        action: string;
+        created_at: number;
+      }>(`
+        SELECT id, action, created_at
+        FROM audit_log
+        WHERE entity_type = 'campaign'
+          AND entity_id = '${safeCampaignId}'
+        ORDER BY created_at DESC
+      `);
+
+      const activity: CampaignActivityItemDto[] = [
+        ...draftsRows.map((draft) => ({
+          id: draft.id,
+          type: 'draft' as const,
+          label: draft.goalText,
+          timestamp: draft.createdAt,
+          status: draft.draftStatus,
+          entityId: draft.id
+        })),
+        ...reminderRows.map((reminder) => ({
+          id: reminder.id,
+          type: 'reminder' as const,
+          label: reminder.note ?? 'Campaign reminder',
+          timestamp: reminder.updated_at,
+          status: reminder.status,
+          entityId: reminder.id
+        })),
+        ...auditRows.map((audit) => ({
+          id: audit.id,
+          type: 'audit' as const,
+          label: audit.action,
+          timestamp: audit.created_at,
+          status: null,
+          entityId: audit.id
+        }))
+      ].sort((left, right) => right.timestamp - left.timestamp);
+
+      return {
+        campaign: mapCampaignSummaryRow(campaignRow),
+        targets: targets.map((target): CampaignTargetDto => ({
+          id: target.id,
+          campaignId: target.campaign_id,
+          contactId: target.contact_id,
+          createdAt: target.created_at,
+          contact: {
+            id: target.contact_id,
+            name: target.contactName,
+            company: target.company,
+            headline: target.headline,
+            relationshipStatus: target.relationshipStatus,
+            nextReminderAt: target.nextReminderAt,
+            lastInteractionAt: target.lastInteractionAt
+          }
+        })),
+        drafts: draftsRows.map((draft) => ({
+          ...draft,
+          approvedText: draft.approvedText ?? null,
+          modelName: draft.modelName ?? null,
+          approvedAt: draft.approvedAt ?? null,
+          sentAt: draft.sentAt ?? null
+        })),
+        reminders: reminderRows.map(mapReminderRow),
+        activity
+      };
+    },
+
+    async createCampaign(input: CreateCampaignInput) {
+      const campaignId = createCampaignId();
+      const now = Date.now();
+      await db.insert(campaigns).values({
+        id: campaignId,
+        name: input.name.trim(),
+        objective: input.objective.trim(),
+        status: input.status,
+        defaultPrompt: input.defaultPrompt?.trim() ? input.defaultPrompt.trim() : null,
+        tags: JSON.stringify(input.tags),
+        createdAt: now,
+        updatedAt: now
+      });
+
+      await appendAuditLog(sqlite, {
+        entityType: 'campaign',
+        entityId: campaignId,
+        action: 'campaign.created',
+        payload: { status: input.status }
+      });
+
+      return this.findCampaignById(campaignId);
+    },
+
+    async updateCampaign(campaignId: string, input: UpdateCampaignInput) {
+      const existing = await this.findCampaignById(campaignId);
+      if (!existing) {
+        return null;
+      }
+
+      const safeCampaignId = campaignId.replace(/'/g, "''");
+      const now = Date.now();
+      const nextName = input.name?.trim() ?? existing.campaign.name;
+      const nextObjective = input.objective?.trim() ?? existing.campaign.objective;
+      const nextStatus = input.status ?? existing.campaign.status;
+      const nextDefaultPrompt = input.defaultPrompt === undefined ? existing.campaign.defaultPrompt : input.defaultPrompt?.trim() || null;
+      const nextTags = input.tags ?? existing.campaign.tags;
+
+      await sqlite.exec(`
+        UPDATE campaigns
+        SET name = '${nextName.replace(/'/g, "''")}',
+            objective = '${nextObjective.replace(/'/g, "''")}',
+            status = '${nextStatus}',
+            default_prompt = ${nextDefaultPrompt ? `'${nextDefaultPrompt.replace(/'/g, "''")}'` : 'NULL'},
+            tags = '${JSON.stringify(nextTags).replace(/'/g, "''")}',
+            updated_at = ${now}
+        WHERE id = '${safeCampaignId}'
+      `);
+
+      await appendAuditLog(sqlite, {
+        entityType: 'campaign',
+        entityId: campaignId,
+        action: 'campaign.updated',
+        payload: { status: nextStatus }
+      });
+
+      return this.findCampaignById(campaignId);
+    },
+
+    async addTargets(campaignId: string, input: AddCampaignTargetsInput) {
+      const existing = await this.findCampaignById(campaignId);
+      if (!existing) {
+        return null;
+      }
+
+      const safeCampaignId = campaignId.replace(/'/g, "''");
+      const now = Date.now();
+      for (const contactId of input.contactIds) {
+        const safeContactId = contactId.replace(/'/g, "''");
+        await sqlite.exec(`
+          INSERT OR IGNORE INTO campaign_targets (id, campaign_id, contact_id, created_at)
+          VALUES ('${createCampaignTargetId()}', '${safeCampaignId}', '${safeContactId}', ${now})
+        `);
+      }
+
+      await sqlite.exec(`UPDATE campaigns SET updated_at = ${now} WHERE id = '${safeCampaignId}'`);
+      await appendAuditLog(sqlite, {
+        entityType: 'campaign',
+        entityId: campaignId,
+        action: 'campaign.targets_added',
+        payload: { contactIds: input.contactIds }
+      });
+
+      return this.findCampaignById(campaignId);
+    },
+
+    async removeTarget(campaignId: string, targetId: string) {
+      const safeCampaignId = campaignId.replace(/'/g, "''");
+      const safeTargetId = targetId.replace(/'/g, "''");
+      const existing = await sqlite.all<{ id: string }>(`
+        SELECT id FROM campaign_targets WHERE id = '${safeTargetId}' AND campaign_id = '${safeCampaignId}' LIMIT 1
+      `);
+      if (existing.length === 0) {
+        return null;
+      }
+
+      const now = Date.now();
+      await sqlite.exec(`DELETE FROM campaign_targets WHERE id = '${safeTargetId}'`);
+      await sqlite.exec(`UPDATE campaigns SET updated_at = ${now} WHERE id = '${safeCampaignId}'`);
+      await appendAuditLog(sqlite, {
+        entityType: 'campaign',
+        entityId: campaignId,
+        action: 'campaign.target_removed',
+        payload: { targetId }
+      });
+
+      return this.findCampaignById(campaignId);
+    }
+  };
+}
+
 export function createContactRepository(_db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
     async findContactConversationDetails(contactId: string) {
@@ -1084,9 +1500,9 @@ export function createMutationRepository(db: RepositoryDbClient, sqlite: Reposit
       return 1;
     },
 
-    async markDraftSent(draftId: string) {
+    async markDraftSent(draftId: string, sentAt?: number) {
       const safeDraftId = draftId.replace(/'/g, "''");
-      const now = Date.now();
+      const now = sentAt ?? Date.now();
       const rows = await sqlite.all<{ id: string; contactId: string }>(`
         SELECT id, contact_id AS contactId
         FROM drafts
@@ -1272,6 +1688,178 @@ export function createMutationRepository(db: RepositoryDbClient, sqlite: Reposit
         modelName: args.modelName,
         variants: args.variants
       };
+    },
+
+    async ignoreContact(contactId: string, reason?: string, cascade = true) {
+      const safeContactId = contactId.replace(/'/g, "''");
+      const safeReason = reason ? reason.replace(/'/g, "''") : null;
+      const now = Date.now();
+
+      const [contact] = await sqlite.all<{ id: string; linkedin_profile_id: string }>(
+        `SELECT id, linkedin_profile_id FROM contacts WHERE id = '${safeContactId}' LIMIT 1`
+      );
+
+      if (!contact) {
+        return 0;
+      }
+
+      const safeLinkedinId = contact.linkedin_profile_id.replace(/'/g, "''");
+      const suppressionId = `suppression-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+      await sqlite.exec(`
+        UPDATE contacts
+        SET deleted_at = ${now},
+            updated_at = ${now}
+        WHERE id = '${safeContactId}'
+      `);
+
+      if (cascade) {
+        await sqlite.exec(`
+          UPDATE conversations
+          SET deleted_at = ${now}
+          WHERE contact_id = '${safeContactId}'
+        `);
+        await sqlite.exec(`
+          UPDATE drafts
+          SET deleted_at = ${now}
+          WHERE contact_id = '${safeContactId}'
+        `);
+      }
+
+      await sqlite.exec(`
+        INSERT OR REPLACE INTO sync_suppressions (
+          id,
+          contact_id,
+          linkedin_profile_id,
+          reason,
+          created_at,
+          deleted_at
+        ) VALUES (
+          '${suppressionId}',
+          '${safeContactId}',
+          '${safeLinkedinId}',
+          ${safeReason ? `'${safeReason}'` : 'NULL'},
+          ${now},
+          NULL
+        )
+      `);
+
+      return 1;
+    },
+
+    async listSyncSuppressions() {
+      return sqlite.all<{
+        id: string;
+        contactId: string | null;
+        linkedinProfileId: string;
+        reason: string | null;
+        createdAt: number;
+        deletedAt: number | null;
+      }>(`
+        SELECT
+          id,
+          contact_id AS contactId,
+          linkedin_profile_id AS linkedinProfileId,
+          reason,
+          created_at AS createdAt,
+          deleted_at AS deletedAt
+        FROM sync_suppressions
+        WHERE deleted_at IS NULL
+        ORDER BY created_at DESC
+      `);
+    },
+
+    async addSyncSuppression(args: { contactId?: string; linkedinProfileId: string; reason?: string }) {
+      const safeContactId = args.contactId ? args.contactId.replace(/'/g, "''") : null;
+      const safeLinkedinId = args.linkedinProfileId.replace(/'/g, "''");
+      const safeReason = args.reason ? args.reason.replace(/'/g, "''") : null;
+      const suppressionId = `suppression-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const now = Date.now();
+
+      await sqlite.exec(`
+        INSERT OR REPLACE INTO sync_suppressions (
+          id,
+          contact_id,
+          linkedin_profile_id,
+          reason,
+          created_at,
+          deleted_at
+        ) VALUES (
+          '${suppressionId}',
+          ${safeContactId ? `'${safeContactId}'` : 'NULL'},
+          '${safeLinkedinId}',
+          ${safeReason ? `'${safeReason}'` : 'NULL'},
+          ${now},
+          NULL
+        )
+      `);
+
+      return suppressionId;
+    },
+
+    async removeSyncSuppression(suppressionId: string) {
+      const safeId = suppressionId.replace(/'/g, "''");
+      await sqlite.exec(`DELETE FROM sync_suppressions WHERE id = '${safeId}'`);
+      return 1;
+    },
+
+    async restoreSuppression(suppressionId: string) {
+      const safeId = suppressionId.replace(/'/g, "''");
+      const [suppression] = await sqlite.all<{
+        id: string;
+        contactId: string | null;
+      }>(`
+        SELECT
+          id,
+          contact_id AS contactId
+        FROM sync_suppressions
+        WHERE id = '${safeId}'
+        LIMIT 1
+      `);
+
+      if (!suppression) {
+        throw new NotFoundError(`Suppression ${suppressionId} not found`);
+      }
+
+      if (suppression.contactId) {
+        const safeContactId = suppression.contactId.replace(/'/g, "''");
+        const now = Date.now();
+
+        await sqlite.exec(`
+          UPDATE contacts
+          SET deleted_at = NULL,
+              updated_at = ${now}
+          WHERE id = '${safeContactId}'
+        `);
+
+        await sqlite.exec(`
+          UPDATE conversations
+          SET deleted_at = NULL,
+              updated_at = ${now}
+          WHERE contact_id = '${safeContactId}'
+        `);
+
+        await sqlite.exec(`
+          UPDATE drafts
+          SET deleted_at = NULL
+          WHERE contact_id = '${safeContactId}'
+        `);
+      }
+
+      await sqlite.exec(`DELETE FROM sync_suppressions WHERE id = '${safeId}'`);
+      return 1;
+    },
+
+    async isLinkedinProfileSuppressed(linkedinProfileId: string) {
+      const safeId = linkedinProfileId.replace(/'/g, "''");
+      const rows = await sqlite.all<{ id: string }>(`
+        SELECT id
+        FROM sync_suppressions
+        WHERE linkedin_profile_id = '${safeId}'
+          AND deleted_at IS NULL
+        LIMIT 1
+      `);
+      return rows.length > 0;
     }
   };
 }
@@ -1775,6 +2363,8 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
         data: {
           accounts: await listTableRows(sqlite, 'accounts'),
           accountAliases: await listTableRows(sqlite, 'account_aliases'),
+          campaigns: await listTableRows(sqlite, 'campaigns'),
+          campaignTargets: await listTableRows(sqlite, 'campaign_targets'),
           reminders: await listTableRows(sqlite, 'reminders'),
           contacts: await listTableRows(sqlite, 'contacts'),
           conversations: await listTableRows(sqlite, 'conversations'),
@@ -1783,6 +2373,7 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
           draftVariants: await listTableRows(sqlite, 'draft_variants'),
           jobs: await listTableRows(sqlite, 'jobs'),
           syncRuns: await listTableRows(sqlite, 'sync_runs'),
+          syncSuppressions: await listTableRows(sqlite, 'sync_suppressions'),
           auditLog: await listTableRows(sqlite, 'audit_log')
         }
       };
@@ -1794,38 +2385,47 @@ export function createSettingsRepository(_db: RepositoryDbClient, sqlite: Reposi
         await sqlite.exec('DELETE FROM drafts');
         await sqlite.exec('DELETE FROM messages');
         await sqlite.exec('DELETE FROM conversations');
+        await sqlite.exec('DELETE FROM campaign_targets');
+        await sqlite.exec('DELETE FROM reminders');
         await sqlite.exec('DELETE FROM contacts');
         await sqlite.exec('DELETE FROM account_aliases');
+        await sqlite.exec('DELETE FROM campaigns');
         await sqlite.exec('DELETE FROM accounts');
-        await sqlite.exec('DELETE FROM reminders');
         await sqlite.exec('DELETE FROM jobs');
         await sqlite.exec('DELETE FROM sync_runs');
+        await sqlite.exec('DELETE FROM sync_suppressions');
         await sqlite.exec('DELETE FROM audit_log');
 
         await replaceTableRows(sqlite, 'accounts', args.data.accounts);
-        await replaceTableRows(sqlite, 'reminders', args.data.reminders);
-        await replaceTableRows(sqlite, 'contacts', args.data.contacts);
         await replaceTableRows(sqlite, 'account_aliases', args.data.accountAliases);
+        await replaceTableRows(sqlite, 'campaigns', args.data.campaigns);
+        await replaceTableRows(sqlite, 'contacts', args.data.contacts);
+        await replaceTableRows(sqlite, 'campaign_targets', args.data.campaignTargets);
+        await replaceTableRows(sqlite, 'reminders', args.data.reminders);
         await replaceTableRows(sqlite, 'conversations', args.data.conversations);
         await replaceTableRows(sqlite, 'messages', args.data.messages);
         await replaceTableRows(sqlite, 'drafts', args.data.drafts);
         await replaceTableRows(sqlite, 'draft_variants', args.data.draftVariants);
         await replaceTableRows(sqlite, 'jobs', args.data.jobs);
         await replaceTableRows(sqlite, 'sync_runs', args.data.syncRuns);
+        await replaceTableRows(sqlite, 'sync_suppressions', args.data.syncSuppressions);
         await replaceTableRows(sqlite, 'audit_log', args.data.auditLog);
         await sqlite.exec('DELETE FROM settings');
         await clearSecretStore();
       } else {
         await upsertTableRows(sqlite, 'accounts', args.data.accounts);
         await upsertTableRows(sqlite, 'account_aliases', args.data.accountAliases);
-        await upsertTableRows(sqlite, 'reminders', args.data.reminders);
+        await upsertTableRows(sqlite, 'campaigns', args.data.campaigns);
         await upsertTableRows(sqlite, 'contacts', args.data.contacts);
+        await upsertTableRows(sqlite, 'campaign_targets', args.data.campaignTargets);
+        await upsertTableRows(sqlite, 'reminders', args.data.reminders);
         await upsertTableRows(sqlite, 'conversations', args.data.conversations);
         await upsertTableRows(sqlite, 'messages', args.data.messages);
         await upsertTableRows(sqlite, 'drafts', args.data.drafts);
         await upsertTableRows(sqlite, 'draft_variants', args.data.draftVariants);
         await upsertTableRows(sqlite, 'jobs', args.data.jobs);
         await upsertTableRows(sqlite, 'sync_runs', args.data.syncRuns);
+        await upsertTableRows(sqlite, 'sync_suppressions', args.data.syncSuppressions);
         await upsertTableRows(sqlite, 'audit_log', args.data.auditLog);
       }
 

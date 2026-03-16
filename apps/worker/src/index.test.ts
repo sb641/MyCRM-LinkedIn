@@ -3,11 +3,12 @@ import path from 'node:path';
 import { vi } from 'vitest';
 
 import { __testables, startWorker } from './index';
-import { createDb, createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
+import { createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
+import { createNodeDb as createDb } from '../../../packages/db/src/server/node-sqlite';
 import { runMigrations } from '../../../packages/db/src/migrate';
 import { runWorkerCycle } from './index';
 import { buildSeedData } from '../../../packages/db/src/seed-data';
-import { contacts, conversations, drafts, draftVariants, messages, settings, auditLog } from '../../../packages/db/src/schema';
+import { accounts, contacts, conversations, drafts, draftVariants, messages, settings, auditLog } from '../../../packages/db/src/schema';
 
 vi.mock('@mycrm/automation', async () => {
   const actual = await vi.importActual<typeof import('@mycrm/automation')>('@mycrm/automation');
@@ -26,6 +27,7 @@ async function setupSeededDb(databaseUrl: string) {
   const seed = buildSeedData();
 
   try {
+    await db.insert(accounts).values(seed.accounts);
     await db.insert(contacts).values(seed.contacts);
     await db.insert(conversations).values(seed.conversations);
     await db.insert(messages).values(seed.messages);
@@ -141,15 +143,64 @@ describe('worker bootstrap', () => {
       await setupConnection.sqlite.close();
 
       const result = await runWorkerCycle(databaseUrl);
-      expect(result.status).toBe('processed');
 
       const verificationConnection = await createDb(databaseUrl);
       try {
         const jobs = await createJobRepository(verificationConnection.db, verificationConnection.sqlite).listJobs();
         const syncRuns = await createSyncRunRepository(verificationConnection.db, verificationConnection.sqlite).listSyncRuns();
         const processedJob = jobs.find((job) => job.id === enqueued.jobId);
+        expect(result.status).toBe('processed');
 
         expect(processedJob?.status).toBe('succeeded');
+        expect(syncRuns[0]).toMatchObject({
+          provider: 'fake-linkedin',
+          status: 'succeeded',
+          itemsScanned: 1,
+          itemsImported: 1
+        });
+      } finally {
+        await verificationConnection.sqlite.close();
+      }
+    } finally {
+      await setupConnection.sqlite.close().catch(() => undefined);
+    }
+  });
+
+  it('falls back to the automation import count when imported threads are not persisted yet', async () => {
+    const databaseUrl = `file:${path.resolve(
+      import.meta.dirname,
+      `./worker-phase8-suppression-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
+    )}`;
+
+    await setupSeededDb(databaseUrl);
+
+    const setupConnection = await createDb(databaseUrl);
+
+    try {
+      const mutationRepository = createMutationRepository(setupConnection.db, setupConnection.sqlite);
+      await mutationRepository.addSyncSuppression({
+        contactId: 'contact-001',
+        linkedinProfileId: 'linkedin-profile-1',
+        reason: 'ignored forever'
+      });
+
+      const repository = createJobRepository(setupConnection.db, setupConnection.sqlite);
+      await repository.enqueueJob('import_threads', {
+        provider: 'fake-linkedin',
+        accountId: 'local-account'
+      });
+
+      await setupConnection.sqlite.close();
+
+      const result = await runWorkerCycle(databaseUrl);
+
+      const verificationConnection = await createDb(databaseUrl);
+      try {
+        const syncRuns = await createSyncRunRepository(verificationConnection.db, verificationConnection.sqlite).listSyncRuns();
+        const jobs = await createJobRepository(verificationConnection.db, verificationConnection.sqlite).listJobs();
+        const processedJob = jobs[0];
+        expect(result.status).toBe('processed');
+
         expect(syncRuns[0]).toMatchObject({
           provider: 'fake-linkedin',
           status: 'succeeded',

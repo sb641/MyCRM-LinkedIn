@@ -112,6 +112,8 @@ export default async function DraftsPage({ searchParams }: DraftsPageProps) {
                         goalText={item.goalText}
                         conversationId={item.conversationId}
                         accountId={item.accountId ?? browserSession?.accountId ?? 'local-account'}
+                        contactId={item.contactId}
+                        contactName={item.contactName}
                       />
                     </article>
                   ))}
