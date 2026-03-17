@@ -693,6 +693,34 @@ export function CrmShell({ state, flags }: CrmShellProps) {
 
             <div className="stack-card">
               <p className="eyebrow">LinkedIn Connection</p>
+              {state.linkedInSyncReadiness ? (
+                <div className="sync-session-summary" aria-label="LinkedIn sync readiness">
+                  <p>
+                    <span className={`status-chip tone-${state.linkedInSyncReadiness.tone}`}>
+                      {state.linkedInSyncReadiness.statusLabel}
+                    </span>
+                  </p>
+                  <p className="stack-copy">{state.linkedInSyncReadiness.message}</p>
+                  <dl className="flag-list">
+                    <div>
+                      <dt>Feature flag</dt>
+                      <dd>{String(state.linkedInSyncReadiness.checks.enableRealBrowserSync)}</dd>
+                    </div>
+                    <div>
+                      <dt>CDP URL</dt>
+                      <dd>{String(state.linkedInSyncReadiness.checks.hasCdpUrl)}</dd>
+                    </div>
+                    <div>
+                      <dt>User profile</dt>
+                      <dd>{String(state.linkedInSyncReadiness.checks.hasUserDataDir)}</dd>
+                    </div>
+                    <div>
+                      <dt>Saved session</dt>
+                      <dd>{String(state.linkedInSyncReadiness.checks.hasSavedSession)}</dd>
+                    </div>
+                  </dl>
+                </div>
+              ) : null}
               {state.browserSession ? (
                 <div className="sync-session-summary" aria-label="Saved browser session">
                   <p>{state.browserSession.statusLabel}</p>

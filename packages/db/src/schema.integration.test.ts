@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { eq } from 'drizzle-orm';
 import { createNodeDb } from './server/node-sqlite';
 import { createAccountRepository, createCampaignRepository, createJobRepository, createMutationRepository, createReminderRepository, createSettingsRepository, createSyncRunRepository } from './repositories';
@@ -34,6 +35,60 @@ describe('Phase 1 schema', () => {
 
     expect(tables).toHaveLength(1);
     await second.sqlite.close();
+  });
+
+  it('backfills missing phase 1 tables for partially migrated databases', async () => {
+    const databaseUrl = `file:${createTempDbPath('partial-migrate')}`;
+    const database = new DatabaseSync(databaseUrl.slice(5));
+
+    try {
+      database.exec(`
+        CREATE TABLE contacts (
+          id TEXT PRIMARY KEY NOT NULL,
+          name TEXT NOT NULL,
+          company TEXT,
+          position TEXT,
+          headline TEXT,
+          profile_url TEXT,
+          linkedin_profile_id TEXT,
+          relationship_status TEXT NOT NULL DEFAULT 'new',
+          last_interaction_at INTEGER,
+          last_reply_at INTEGER,
+          last_sent_at INTEGER,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+        );
+        CREATE TABLE jobs (
+          id TEXT PRIMARY KEY NOT NULL,
+          type TEXT NOT NULL,
+          payload TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'queued',
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          locked_at INTEGER,
+          last_error TEXT,
+          scheduled_for INTEGER,
+          created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+          updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+        );
+      `);
+    } finally {
+      database.close();
+    }
+
+    const reopened = await createNodeDb(databaseUrl);
+
+    try {
+      const tables = await reopened.sqlite.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('accounts', 'contacts', 'jobs', 'settings') ORDER BY name"
+      );
+      const contactColumns = await reopened.sqlite.all<{ name: string }>('PRAGMA table_info(contacts)');
+
+      expect(tables.map((entry) => entry.name)).toEqual(['accounts', 'contacts', 'jobs', 'settings']);
+      expect(contactColumns.map((column) => column.name)).toContain('account_id');
+      expect(contactColumns.map((column) => column.name)).toContain('deleted_at');
+    } finally {
+      await reopened.sqlite.close();
+    }
   });
 
   it('enforces foreign keys and cascades dependent rows on contact delete', async () => {

@@ -405,6 +405,26 @@ export const browserSessionSchema = z.object({
   capturedAt: z.number().int().positive().optional()
 });
 
+export const linkedinSyncReadinessSchema = z.object({
+  accountId: z.string().min(1),
+  ready: z.boolean(),
+  reason: z.enum([
+    'ready',
+    'feature_disabled',
+    'cdp_configured',
+    'profile_configured',
+    'session_available',
+    'browser_session_missing'
+  ]),
+  message: z.string().min(1),
+  checks: z.object({
+    enableRealBrowserSync: z.boolean(),
+    hasCdpUrl: z.boolean(),
+    hasUserDataDir: z.boolean(),
+    hasSavedSession: z.boolean()
+  })
+});
+
 export const settingKeySchema = z.enum([
   'default_account_id',
   'followup_days',
@@ -588,6 +608,7 @@ export type ImportThreadsResultDto = z.infer<typeof importThreadsResultSchema>;
 export type SyncRunDto = z.infer<typeof syncRunDtoSchema>;
 export type ManualSyncRequest = z.infer<typeof manualSyncRequestSchema>;
 export type BrowserSessionInput = z.infer<typeof browserSessionSchema>;
+export type LinkedInSyncReadinessDto = z.infer<typeof linkedinSyncReadinessSchema>;
 export type QueueSendRequest = z.infer<typeof queueSendRequestSchema>;
 export type SendMessagePayload = z.infer<typeof sendMessagePayloadSchema>;
 export type SendMessageResultDto = z.infer<typeof sendMessageResultSchema>;

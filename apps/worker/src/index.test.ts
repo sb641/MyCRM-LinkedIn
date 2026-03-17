@@ -15,11 +15,13 @@ vi.mock('@mycrm/automation', async () => {
 
   return {
     ...actual,
+    runImportThreads: vi.fn(actual.runImportThreads),
     sendBrowserMessage: vi.fn(actual.sendBrowserMessage)
   };
 });
 
 const automationModule = await import('@mycrm/automation');
+const workspaceRoot = path.resolve(import.meta.dirname, '../../..');
 
 async function setupSeededDb(databaseUrl: string) {
   await runMigrations(databaseUrl);
@@ -215,7 +217,7 @@ describe('worker bootstrap', () => {
     }
   });
 
-  it('fails import_threads jobs when real browser sync is enabled without a saved session', async () => {
+  it('falls through to the Playwright boundary when real browser sync is enabled and legacy session bootstrap is available', async () => {
     const databaseUrl = `file:${path.resolve(
       import.meta.dirname,
       `./worker-phase9-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
@@ -236,6 +238,11 @@ describe('worker bootstrap', () => {
 
       const previousFlag = process.env.ENABLE_REAL_BROWSER_SYNC;
       process.env.ENABLE_REAL_BROWSER_SYNC = 'true';
+      const runImportThreadsMock = vi.mocked(automationModule.runImportThreads);
+      runImportThreadsMock.mockClear();
+      runImportThreadsMock.mockRejectedValueOnce(
+        new Error('LinkedIn browser sync could not open the messaging inbox for account missing-account.')
+      );
 
       try {
         const result = await runWorkerCycle(databaseUrl);
@@ -248,13 +255,14 @@ describe('worker bootstrap', () => {
           const processedJob = jobs.find((job) => job.id === enqueued.jobId);
 
           expect(processedJob?.status).toBe('retry_scheduled');
-          expect(processedJob?.lastError).toMatch(/no saved browser session/i);
+          expect(processedJob?.lastError).toMatch(/could not open the messaging inbox/i);
           expect(syncRuns[0]).toMatchObject({
             provider: 'linkedin-browser',
             status: 'failed',
             itemsScanned: 0,
             itemsImported: 0
           });
+          expect(syncRuns[0]?.error).toMatch(/could not open the messaging inbox/i);
         } finally {
           await verificationConnection.sqlite.close();
         }
@@ -270,7 +278,7 @@ describe('worker bootstrap', () => {
     }
   });
 
-  it('records a failed sync run when a saved browser session exists but browser execution is not implemented yet', async () => {
+  it('records a failed sync run when a saved browser session exists but browser execution fails', async () => {
     const databaseUrl = `file:${path.resolve(
       import.meta.dirname,
       `./worker-phase9-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
@@ -311,6 +319,11 @@ describe('worker bootstrap', () => {
 
       const previousFlag = process.env.ENABLE_REAL_BROWSER_SYNC;
       process.env.ENABLE_REAL_BROWSER_SYNC = 'true';
+      const runImportThreadsMock = vi.mocked(automationModule.runImportThreads);
+      runImportThreadsMock.mockClear();
+      runImportThreadsMock.mockRejectedValueOnce(
+        new Error('LinkedIn browser sync could not load the saved session for account local-account.')
+      );
 
       try {
         const result = await runWorkerCycle(databaseUrl);
@@ -323,14 +336,14 @@ describe('worker bootstrap', () => {
           const processedJob = jobs.find((job) => job.id === enqueued.jobId);
 
           expect(processedJob?.status).toBe('retry_scheduled');
-          expect(processedJob?.lastError).toMatch(/not implemented yet/i);
+          expect(processedJob?.lastError).toMatch(/could not load the saved session/i);
           expect(syncRuns[0]).toMatchObject({
             provider: 'linkedin-browser',
             status: 'failed',
             itemsScanned: 0,
             itemsImported: 0
           });
-          expect(syncRuns[0]?.error).toMatch(/not implemented yet/i);
+          expect(syncRuns[0]?.error).toMatch(/could not load the saved session/i);
         } finally {
           await verificationConnection.sqlite.close();
         }
@@ -343,6 +356,85 @@ describe('worker bootstrap', () => {
       }
     } finally {
       await fs.rm(sessionPath, { force: true }).catch(() => undefined);
+      await setupConnection.sqlite.close().catch(() => undefined);
+    }
+  });
+
+  it('bootstraps a browser session from the legacy USER_DATA_DIR profile before surfacing browser sync failures', async () => {
+    const databaseUrl = `file:${path.resolve(
+      import.meta.dirname,
+      `./worker-phase9-legacy-session-test-${Date.now()}-${Math.random().toString(16).slice(2)}.db`
+    )}`;
+    const envPath = path.resolve(workspaceRoot, '.env');
+    const originalEnv = await fs.readFile(envPath, 'utf8');
+    const legacyProfileRoot = path.resolve(
+      import.meta.dirname,
+      `./tmp-legacy-profile-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    );
+    const defaultProfileDir = path.join(legacyProfileRoot, 'Default');
+    const cookiesDir = path.join(defaultProfileDir, 'Network');
+    const sessionRoot = path.resolve(workspaceRoot, '.mycrm', 'sessions');
+    const sessionPath = path.join(sessionRoot, 'legacy-account.json');
+
+    await setupSeededDb(databaseUrl);
+    await fs.mkdir(cookiesDir, { recursive: true });
+    await fs.writeFile(path.join(cookiesDir, 'Cookies'), 'legacy-cookie-db-placeholder', 'utf8');
+    await fs.writeFile(
+      envPath,
+      originalEnv.replace(
+        /^USER_DATA_DIR=.*$/m,
+        `USER_DATA_DIR=${legacyProfileRoot.replace(/\\/g, '\\\\')}`
+      ),
+      'utf8'
+    );
+    await fs.rm(sessionPath, { force: true }).catch(() => undefined);
+
+    const setupConnection = await createDb(databaseUrl);
+
+    try {
+      const repository = createJobRepository(setupConnection.db, setupConnection.sqlite);
+      const enqueued = await repository.enqueueJob('import_threads', {
+        provider: 'linkedin-browser',
+        accountId: 'legacy-account'
+      });
+
+      await setupConnection.sqlite.close();
+
+      const previousFlag = process.env.ENABLE_REAL_BROWSER_SYNC;
+      process.env.ENABLE_REAL_BROWSER_SYNC = 'true';
+      const runImportThreadsMock = vi.mocked(automationModule.runImportThreads);
+      runImportThreadsMock.mockClear();
+      runImportThreadsMock.mockRejectedValueOnce(
+        new Error('LinkedIn browser sync could not continue after importing the legacy profile for account legacy-account.')
+      );
+
+      try {
+        const result = await runWorkerCycle(databaseUrl);
+        expect(result.status).toBe('retry_scheduled');
+
+        const verificationConnection = await createDb(databaseUrl);
+        try {
+          const jobs = await createJobRepository(verificationConnection.db, verificationConnection.sqlite).listJobs();
+          const syncRuns = await createSyncRunRepository(verificationConnection.db, verificationConnection.sqlite).listSyncRuns();
+          const processedJob = jobs.find((job) => job.id === enqueued.jobId);
+
+          expect(processedJob?.status).toBe('retry_scheduled');
+          expect(processedJob?.lastError).toMatch(/could not continue after importing the legacy profile/i);
+          expect(syncRuns[0]?.error).toMatch(/could not continue after importing the legacy profile/i);
+        } finally {
+          await verificationConnection.sqlite.close();
+        }
+      } finally {
+        if (previousFlag === undefined) {
+          delete process.env.ENABLE_REAL_BROWSER_SYNC;
+        } else {
+          process.env.ENABLE_REAL_BROWSER_SYNC = previousFlag;
+        }
+      }
+    } finally {
+      await fs.writeFile(envPath, originalEnv, 'utf8');
+      await fs.rm(sessionPath, { force: true }).catch(() => undefined);
+      await fs.rm(legacyProfileRoot, { recursive: true, force: true }).catch(() => undefined);
       await setupConnection.sqlite.close().catch(() => undefined);
     }
   });
@@ -397,7 +489,7 @@ describe('worker bootstrap', () => {
 
       try {
         const result = await runWorkerCycle(databaseUrl);
-        expect(result.status).toBe('retry_scheduled');
+        expect(result.status).toBe('processed');
 
         const verificationConnection = await createDb(databaseUrl);
         try {
@@ -409,7 +501,7 @@ describe('worker bootstrap', () => {
           ).findDraftForSend('draft-001');
 
           expect(sendBrowserMessageMock).not.toHaveBeenCalled();
-          expect(processedJob?.status).toBe('retry_scheduled');
+          expect(processedJob?.status).toBe('succeeded');
           expect(draft?.sendStatus).toBe('sent');
           expect(draft?.sentAt).not.toBeNull();
         } finally {
@@ -473,6 +565,10 @@ describe('worker bootstrap', () => {
 
       await setupConnection.sqlite.close();
 
+      const sendBrowserMessageMock = vi.mocked(automationModule.sendBrowserMessage);
+      sendBrowserMessageMock.mockClear();
+      sendBrowserMessageMock.mockRejectedValueOnce(new Error('LinkedIn send button was not available for account local-account in thread conversation-003.'));
+
       const previousBrowserFlag = process.env.ENABLE_REAL_BROWSER_SYNC;
       const previousSendFlag = process.env.ENABLE_REAL_SEND;
       process.env.ENABLE_REAL_BROWSER_SYNC = 'true';
@@ -486,8 +582,14 @@ describe('worker bootstrap', () => {
         try {
           const jobs = await createJobRepository(verificationConnection.db, verificationConnection.sqlite).listJobs();
           const processedJob = jobs.find((job) => job.id === enqueued.jobId);
+          const draft = await createMutationRepository(
+            verificationConnection.db,
+            verificationConnection.sqlite
+          ).findDraftForSend('draft-003');
+
           expect(processedJob?.status).toBe('retry_scheduled');
-          expect(processedJob?.lastError).toMatch(/not implemented yet/i);
+          expect(processedJob?.lastError).toMatch(/send button was not available/i);
+          expect(draft?.sendStatus).toBe('failed');
         } finally {
           await verificationConnection.sqlite.close();
         }

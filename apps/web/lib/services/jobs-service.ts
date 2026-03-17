@@ -4,13 +4,17 @@ import {
   enqueueJobResultSchema,
   jobDtoSchema,
   type JobWithAuditDto,
+  linkedinSyncReadinessSchema,
   manualSyncRequestSchema,
-  syncRunDtoSchema
+  syncRunDtoSchema,
+  AppError,
+  getEnv
 } from '@mycrm/core';
 import { createJobRepository, createSyncRunRepository, getDb } from '@mycrm/db/server';
+import { createBrowserSyncProvider, createFileSessionStore } from '@mycrm/automation';
 
 export async function listJobs(databaseUrl?: string) {
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getDb(databaseUrl);
 
   try {
     const repository = createJobRepository(db, sqlite);
@@ -21,7 +25,7 @@ export async function listJobs(databaseUrl?: string) {
 }
 
 export async function listJobsWithAudit(databaseUrl?: string) {
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getDb(databaseUrl);
 
   try {
     const repository = createJobRepository(db, sqlite);
@@ -40,7 +44,7 @@ export async function listJobsWithAudit(databaseUrl?: string) {
 
 export async function enqueueJob(input: unknown, databaseUrl?: string) {
   const parsed = enqueueJobInputSchema.parse(input);
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getDb(databaseUrl);
 
   try {
     const repository = createJobRepository(db, sqlite);
@@ -50,8 +54,31 @@ export async function enqueueJob(input: unknown, databaseUrl?: string) {
   }
 }
 
+export async function enqueueJobWithVerification(input: unknown, databaseUrl?: string) {
+  const parsed = enqueueJobInputSchema.parse(input);
+  const { db, sqlite, resolvedDatabasePath, resolvedDatabaseUrl } = await getDb(databaseUrl);
+
+  try {
+    const repository = createJobRepository(db, sqlite);
+    const result = enqueueJobResultSchema.parse(
+      await repository.enqueueJob(parsed.type, parsed.payload, parsed.scheduledFor ?? null)
+    );
+    const jobs = await repository.listJobs();
+    const verifiedJob = jobs.find((job) => job.id === result.jobId) ?? null;
+
+    return {
+      ...result,
+      verifiedJob: verifiedJob ? jobDtoSchema.parse(verifiedJob) : null,
+      databaseUrl: databaseUrl ?? null,
+      resolvedDatabaseUrl,
+      resolvedDatabasePath
+    };
+  } finally {
+  }
+}
+
 export async function listSyncRuns(databaseUrl?: string, limit?: number) {
-  const { db, sqlite } = await getDb();
+  const { db, sqlite } = await getDb(databaseUrl);
 
   try {
     const repository = createSyncRunRepository(db, sqlite);
@@ -64,7 +91,26 @@ export async function listSyncRuns(databaseUrl?: string, limit?: number) {
 export async function enqueueManualBrowserSync(input: unknown, databaseUrl?: string) {
   const parsed = manualSyncRequestSchema.parse(input);
 
+  await assertManualBrowserSyncReady(parsed);
+
   return enqueueJob(
+    {
+      type: 'import_threads',
+      payload: {
+        provider: parsed.provider,
+        accountId: parsed.accountId
+      }
+    },
+    databaseUrl
+  );
+}
+
+export async function enqueueManualBrowserSyncWithVerification(input: unknown, databaseUrl?: string) {
+  const parsed = manualSyncRequestSchema.parse(input);
+
+  await assertManualBrowserSyncReady(parsed);
+
+  return enqueueJobWithVerification(
     {
       type: 'import_threads',
       payload: {
@@ -79,4 +125,102 @@ export async function enqueueManualBrowserSync(input: unknown, databaseUrl?: str
 export async function listImportThreadJobs(databaseUrl?: string): Promise<JobWithAuditDto[]> {
   const jobs = await listJobsWithAudit(databaseUrl);
   return jobs.filter((entry) => entry.job.type === 'import_threads');
+}
+
+export async function getManualBrowserSyncReadiness(accountId: string) {
+  const env = getEnv();
+  const sessionStore = createFileSessionStore();
+  const savedSession = await sessionStore.load(accountId);
+  const hasSavedSession = Boolean(savedSession?.cookiesJson?.trim());
+  const hasCdpUrl = Boolean(env.CHROME_CDP_URL?.trim());
+  const hasUserDataDir = Boolean(env.USER_DATA_DIR?.trim());
+
+  const checks = {
+    enableRealBrowserSync: env.ENABLE_REAL_BROWSER_SYNC,
+    hasCdpUrl,
+    hasUserDataDir,
+    hasSavedSession
+  };
+
+  if (!env.ENABLE_REAL_BROWSER_SYNC) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: false,
+      reason: 'feature_disabled',
+      message: 'LinkedIn browser sync is disabled. Set ENABLE_REAL_BROWSER_SYNC=true before starting a manual sync.',
+      checks
+    });
+  }
+
+  if (hasCdpUrl) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: true,
+      reason: 'cdp_configured',
+      message: 'Chrome CDP is configured. Sync can reuse an authenticated Chrome session.',
+      checks
+    });
+  }
+
+  if (hasUserDataDir) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: true,
+      reason: 'profile_configured',
+      message: 'Chrome user profile is configured. Sync can reuse a local browser profile.',
+      checks
+    });
+  }
+
+  if (hasSavedSession) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: true,
+      reason: 'session_available',
+      message: 'Saved LinkedIn session found. Sync can authenticate with stored cookies.',
+      checks
+    });
+  }
+
+  return linkedinSyncReadinessSchema.parse({
+    accountId,
+    ready: false,
+    reason: 'browser_session_missing',
+    message:
+      'No reusable LinkedIn session found. Configure CHROME_CDP_URL, provide USER_DATA_DIR, or save a browser session first.',
+    checks
+  });
+}
+
+async function assertManualBrowserSyncReady(input: { accountId: string; provider: string }) {
+  const readiness = await getManualBrowserSyncReadiness(input.accountId);
+
+  if (!readiness.ready) {
+    throw new AppError(readiness.message, {
+      code: 'MANUAL_SYNC_NOT_READY',
+      status: 400,
+      details: {
+        reason: readiness.reason,
+        checks: readiness.checks,
+        accountId: input.accountId
+      }
+    });
+  }
+
+  try {
+    await createBrowserSyncProvider(input, {
+      enableRealBrowserSync: true,
+      sessionStore: createFileSessionStore()
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'LinkedIn browser sync is not ready.';
+    throw new AppError(message, {
+      code: 'MANUAL_SYNC_NOT_READY',
+      status: 400,
+      details: {
+        reason: 'browser_session_missing',
+        accountId: input.accountId
+      }
+    });
+  }
 }

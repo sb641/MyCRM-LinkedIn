@@ -192,7 +192,7 @@ The redesign should move from editorial styling to CRM styling.
 | Status | Phase | Name | Primary Outcome |
 |---|---:|---|---|
 | [ ] | 0 | UX Baseline and Redesign Guardrails | Freeze target patterns, metrics, and regression boundaries |
-| [ ] | 1 | Shell Refactor and Collapsible Navigation | Intercom-like shell with collapsible left navigation |
+| [x] | 1 | Shell Refactor and Collapsible Navigation | Intercom-like shell with collapsible left navigation |
 | [ ] | 2 | Inbox Layout Overhaul | Dense three-column inbox optimized for leads, preview, and drafts |
 | [ ] | 3 | Draft Workspace Redesign | Draft review and editing become first-class operator workflows |
 | [ ] | 4 | Accounts Workspace Redesign | Account mode becomes usable as an ABM operating surface |
@@ -202,7 +202,7 @@ The redesign should move from editorial styling to CRM styling.
 
 ## Phase 0
 
-Status: `[ ] Not started`
+Status: `[x] Completed`
 
 ### Goal
 
@@ -281,12 +281,12 @@ Replace the current heavy shell with a compact Intercom-like application frame a
 
 ### Implementation Checklist
 
-- [ ] add shell state for collapsed and expanded navigation
-- [ ] redesign nav into compact rail plus optional expanded labels
-- [ ] reduce shell padding and border radius
-- [ ] remove oversized route hero treatment from daily work pages
-- [ ] preserve route navigation and active-state clarity
-- [ ] ensure keyboard and pointer access still work for navigation
+- [x] add shell state for collapsed and expanded navigation
+- [x] redesign nav into compact rail plus optional expanded labels
+- [x] reduce shell padding and border radius
+- [x] remove oversized route hero treatment from daily work pages
+- [x] preserve route navigation and active-state clarity
+- [x] ensure keyboard and pointer access still work for navigation
 
 ### Acceptance Criteria
 
@@ -314,6 +314,13 @@ Manual:
 - verify collapsed shell gives visibly more room to the main workspace
 - verify active route remains obvious in both expanded and collapsed states
 - verify shell does not visually dominate the page
+
+### Implementation Notes
+
+- `crm-app-shell.tsx` persists collapsed navigation state in local storage and applies a compact grid layout.
+- `crm-nav.tsx` now separates queue and workspace destinations, preserves active-state clarity, and supports collapsed navigation without losing route reachability.
+- `crm-topbar.tsx` and `crm-page-frame.tsx` remove hero-banner emphasis and keep route chrome compact.
+- `globals.css` now uses tighter shell spacing, smaller radii, sticky navigation, and responsive fallback to a single-column layout on narrower screens.
 
 ### Exit Gate
 

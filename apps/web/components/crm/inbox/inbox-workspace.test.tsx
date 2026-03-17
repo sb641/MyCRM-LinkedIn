@@ -67,7 +67,7 @@ describe('InboxWorkspace bulk draft flow', () => {
     expect(screen.getByRole('heading', { name: 'Stakeholder lanes' })).toBeTruthy();
     expect(screen.getByLabelText('Executive lane')).toBeTruthy();
     expect(screen.getByLabelText('Director lane')).toBeTruthy();
-    expect(screen.getAllByText('Acme Incorporated')).toHaveLength(2);
+    expect(screen.getAllByText('Acme Incorporated')).toHaveLength(3);
   });
 
   it('creates, assigns, and merges accounts from account mode controls', async () => {

@@ -32,8 +32,8 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
 | [x] | 7 | Jobs, Worker, and Queueing | Completed and validated |
 | [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
-| [x] | 9 | Real Browser-Assisted Sync | Completed in code, tests, and docs; real Playwright execution remains intentionally stubbed |
-| [x] | 10 | User-Approved Send Workflow | Completed in code, tests, and docs with guarded browser-send seam and fake-provider validation |
+| [!] | 9 | Real Browser-Assisted Sync | Browser architecture exists, but real LinkedIn browser execution needs CDP-first repair, provider cleanup, and live-session validation |
+| [x] | 10 | User-Approved Send Workflow | Completed with queueing, worker execution, fake-provider coverage, and real-browser provider send wiring |
 | [x] | 11 | Settings, Secrets, Security, Backup/Restore | Completed with settings UI/API, local secret storage, workspace-scoped backup export/restore semantics, redaction, import/reset hardening, and restore review safeguards |
 | [ ] | 12 | Hardening, Performance, QA, and Release | Pending |
 
@@ -260,6 +260,63 @@ Review gate:
 
 ## Phase 9
 
+Status: `[!] Needs review / repair`
+
+Goal:
+Make real LinkedIn browser-assisted sync work safely against a live logged-in browser session without relying on CI or automatic credential login.
+
+Implementation checklist:
+- [x] Add guarded real-browser sync entry path behind feature flags
+- [x] Add session storage abstraction and legacy session bootstrap
+- [x] Add persistent-profile browser reuse helper
+- [x] Add CDP connection helper for an already-open Chrome session
+- [ ] Repair `createBrowserSyncProvider(...)` so provider selection is valid and deterministic
+- [ ] Make provider precedence explicit: `CHROME_CDP_URL` first, then `USER_DATA_DIR`, then saved-cookie fallback
+- [ ] Remove stray/partial `REMOTE_DEBUGGING_URL` patch logic and keep one canonical browser connection config path
+- [ ] Promote CDP from helper-only code to the default real-browser provider path
+- [ ] Keep persistent-profile reuse as fallback only, not the default live-account path
+- [ ] Remove automatic username/password login from the normal real-browser flow and fail with actionable guidance instead
+- [ ] Refactor thread/message extraction so CDP and persistent-profile paths share the same import logic
+- [ ] Add tests for provider selection precedence and session reuse behavior
+- [ ] Run a live smoke validation against an already-open Chrome with remote debugging enabled
+
+Validation:
+- [x] `pnpm --filter @mycrm/automation test`
+- [x] `pnpm --filter @mycrm/automation typecheck`
+- [ ] `pnpm --filter @mycrm/automation test` after provider repair and new coverage
+- [ ] Live browser smoke test proves LinkedIn messaging opens without redirecting to login
+- [ ] Live browser smoke test proves the automation disconnects without closing the user's browser
+
+Notes:
+- CI must continue to use fake/mock providers only.
+- Real browser sync is a local operator workflow and should prefer CDP attachment to an already-open authenticated Chrome session.
+
+## Phase 10
+
+Status: `[!] Needs review / repair`
+
+Goal:
+Keep send explicit and user-approved while completing the missing real browser send implementation on top of the repaired browser provider path.
+
+Implementation checklist:
+- [x] Add approved-draft send API and queue flow
+- [x] Add worker `send_message` handling and audit trail
+- [x] Add duplicate-send safety guard and fake-provider validation
+- [ ] Implement real `sendMessage(...)` on the chosen real-browser provider, starting with the CDP-backed path
+- [ ] Reuse the same browser session strategy for send that is used for sync
+- [ ] Add per-account serialization and pacing for browser send actions
+- [ ] Add explicit tests for real-send provider selection and guarded failure modes
+- [ ] Run an approved-draft live send smoke test only after Phase 9 browser repair is complete
+
+Validation:
+- [x] Queue/send API and worker tests pass with fake provider
+- [ ] Real browser send succeeds through the approved-draft flow in a local smoke test
+- [ ] Real browser send respects feature flags and does not bypass approval
+
+Notes:
+- Phase 10 remains dependent on the repaired Phase 9 browser path.
+- Do not treat the guarded seam as production-complete until real browser send is implemented and validated.
+
 Status: `[x] Completed`
 
 Goal:
@@ -416,5 +473,5 @@ Review gate:
 - Updated the worker to use the persistent session store for guarded real-browser sync attempts instead of an ephemeral in-memory store.
 - The CRM shell now surfaces saved browser-session readiness, browser agent metadata, richer sync-run summaries, and normalized operator guidance for missing or stale sessions.
 - Added worker coverage for the saved-session real-browser path so Phase 9 verifies both the missing-session guard and the persisted-session handoff into the not-yet-implemented browser provider.
-- Added manual smoke notes for saving a browser session, queueing manual sync, and verifying operator-facing retry guidance while real browser execution remains intentionally stubbed.
+- Added manual smoke notes for saving a browser session, queueing manual sync, and verifying operator-facing retry guidance when real browser execution fails or requires operator intervention.
 - Validation passed: `pnpm --filter @mycrm/automation test`, `pnpm --filter @mycrm/worker test -- --run src/index.test.ts`, and `pnpm --filter @mycrm/web test -- --run app/page.test.tsx lib/crm-shell.test.ts app/api/browser-session/route.test.ts app/api/jobs/route.test.ts`.

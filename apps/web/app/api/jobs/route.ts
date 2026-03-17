@@ -3,7 +3,14 @@ export const dynamic = 'force-dynamic';
 
 import { NextResponse } from 'next/server';
 import { toErrorResponse } from '@mycrm/core';
-import { enqueueJob, enqueueManualBrowserSync, listJobsWithAudit, listSyncRuns } from '@/lib/services/jobs-service';
+import {
+  enqueueJob,
+  enqueueJobWithVerification,
+  enqueueManualBrowserSync,
+  enqueueManualBrowserSyncWithVerification,
+  listJobsWithAudit,
+  listSyncRuns
+} from '@/lib/services/jobs-service';
 
 export async function GET() {
   try {
@@ -18,10 +25,18 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const mode = new URL(request.url).searchParams.get('mode');
+    const url = new URL(request.url);
+    const mode = url.searchParams.get('mode');
+    const debugVerify = url.searchParams.get('debugVerify') === '1';
     const rawBody = await request.text();
     const body = rawBody ? JSON.parse(rawBody) : {};
-    const result = mode === 'manual-sync' ? await enqueueManualBrowserSync(body) : await enqueueJob(body);
+    const result = debugVerify
+      ? mode === 'manual-sync'
+        ? await enqueueManualBrowserSyncWithVerification(body)
+        : await enqueueJobWithVerification(body)
+      : mode === 'manual-sync'
+        ? await enqueueManualBrowserSync(body)
+        : await enqueueJob(body);
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     const response = toErrorResponse(error);

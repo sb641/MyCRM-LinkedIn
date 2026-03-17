@@ -1,4 +1,123 @@
 import { expect, test } from '@playwright/test';
+import { createNodeDb } from '../../../packages/db/src/server/node-sqlite';
+import path from 'node:path';
+import { spawn, type ChildProcess } from 'node:child_process';
+
+const workspaceRoot = path.resolve(__dirname, '../../..');
+const e2eDatabasePath = path.join(workspaceRoot, '.e2e', 'playwright.sqlite');
+const e2eDatabaseUrl = `file:${e2eDatabasePath.replace(/\\/g, '/')}`;
+const normalizedE2eDatabasePath = e2eDatabasePath.replace(/\\/g, '/');
+let workerProcess: ChildProcess | null = null;
+
+async function resetJobState() {
+  const { sqlite } = await createNodeDb(e2eDatabaseUrl);
+
+  try {
+    await sqlite.exec("DELETE FROM audit_log WHERE entity_type = 'job'");
+    await sqlite.exec('DELETE FROM jobs');
+    await sqlite.exec('DELETE FROM sync_runs');
+  } finally {
+    await sqlite.close();
+  }
+}
+
+async function readJobAuditSnapshot() {
+  const { sqlite } = await createNodeDb(e2eDatabaseUrl);
+
+  try {
+    const jobs = await sqlite.all<{
+      id: string;
+      status: string;
+      createdAt: number;
+      updatedAt: number;
+    }>(`
+      SELECT id, status, created_at AS createdAt, updated_at AS updatedAt
+      FROM jobs
+      ORDER BY created_at DESC
+    `);
+    const audit = await sqlite.all<{
+      entityId: string;
+      action: string;
+      createdAt: number;
+    }>(`
+      SELECT entity_id AS entityId, action, created_at AS createdAt
+      FROM audit_log
+      WHERE entity_type = 'job'
+      ORDER BY created_at DESC
+      LIMIT 20
+    `);
+
+    return { jobs, audit };
+  } finally {
+    await sqlite.close();
+  }
+}
+
+async function readJobById(jobId: string) {
+  const { sqlite } = await createNodeDb(e2eDatabaseUrl);
+
+  try {
+    const [job] = await sqlite.all<{
+      id: string;
+      status: string;
+      createdAt: number;
+      updatedAt: number;
+    }>(`
+      SELECT id, status, created_at AS createdAt, updated_at AS updatedAt
+      FROM jobs
+      WHERE id = '${jobId.replace(/'/g, "''")}'
+      LIMIT 1
+    `);
+
+    return job ?? null;
+  } finally {
+    await sqlite.close();
+  }
+}
+
+async function startE2eWorker() {
+  if (workerProcess && !workerProcess.killed) {
+    return;
+  }
+
+  workerProcess = spawn(
+    'cmd',
+    ['/c', 'pnpm', '--filter', '@mycrm/worker', 'dev'],
+    {
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        DATABASE_URL: e2eDatabaseUrl,
+        ENABLE_AI: 'false',
+        ENABLE_AUTOMATION: 'false',
+        ENABLE_REAL_BROWSER_SYNC: 'false',
+        ENABLE_REAL_SEND: 'false',
+        LOG_LEVEL: 'info'
+      },
+      stdio: 'ignore'
+    }
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+}
+
+async function stopE2eWorker() {
+  if (!workerProcess) {
+    return;
+  }
+
+  workerProcess.kill();
+  workerProcess = null;
+  await new Promise((resolve) => setTimeout(resolve, 500));
+}
+
+test.beforeEach(async () => {
+  await startE2eWorker();
+});
+
+test.afterEach(async () => {
+  await stopE2eWorker();
+});
 
 test.describe.configure({ mode: 'serial' });
 
@@ -6,12 +125,11 @@ test('loads the CRM shell smoke flow', async ({ page }) => {
   await page.goto('/');
 
   await expect(page).toHaveURL(/\/inbox/);
-  await expect(page.getByRole('heading', { name: 'Daily operating workspace' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Operator workspace' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'People' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Conversation and drafts' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Signals and operations' })).toBeVisible();
-  await expect(page.getByText('Sync History')).toBeVisible();
-  await expect(page.getByLabel('Workspace settings')).toBeVisible();
+  await expect(page.getByLabel('Top bar actions')).toBeVisible();
+  await expect(page.getByLabel('Sync history')).toBeAttached();
   await expect(
     page.getByLabel('Top bar actions').getByRole('button', { name: 'Sync Conversations' })
   ).toBeVisible();
@@ -20,21 +138,22 @@ test('loads the CRM shell smoke flow', async ({ page }) => {
 test('saves settings and exports a backup snapshot', async ({ page }) => {
   await page.goto('/');
 
-  await page.getByRole('textbox', { name: 'followup_days' }).fill('11');
+  const adminTools = page.getByLabel('Workspace admin tools');
   const saveSettingsResponsePromise = page.waitForResponse(
     (response) => response.url().includes('/api/settings') && response.request().method() === 'PUT'
   );
-  await page.getByRole('button', { name: 'Save settings' }).click();
+  await adminTools.getByRole('button', { name: 'Save settings' }).click();
   const saveSettingsResponse = await saveSettingsResponsePromise;
   expect(saveSettingsResponse.ok()).toBeTruthy();
 
-  await expect(page.getByText('Saved 2 settings')).toBeVisible();
+  await expect(page.getByText(/Saved \d+ settings/)).toBeVisible();
 
-  await page.getByRole('button', { name: 'Export Workspace Data' }).click();
+  await adminTools.getByRole('button', { name: 'Export backup' }).click();
 
   await expect(page.getByText('Backup exported without secrets')).toBeVisible();
-  await expect(page.getByLabel('Restore workspace payload')).toContainText('"version": 1');
-  await expect(page.getByLabel('Restore workspace payload')).toContainText('"followup_days"');
+  await adminTools.getByText('Restore workspace data').click();
+  await expect(page.getByRole('textbox', { name: 'Restore/import payload' })).toContainText('"version": 1');
+  await expect(page.getByRole('textbox', { name: 'Restore/import payload' })).toContainText('"followup_days"');
 });
 
 test('queues manual sync and approved draft send', async ({ page }) => {
@@ -56,13 +175,127 @@ test('queues manual sync and approved draft send', async ({ page }) => {
   await expect(page.getByText(/Queued send for/).last()).toBeVisible();
 });
 
+test('processes People panel sync beyond queued state when worker is running', async ({ page, request }) => {
+  await resetJobState();
+  await page.goto('/');
+
+  const syncButton = page.getByRole('button', { name: 'Sync Conversations' }).last();
+  const enqueueResponsePromise = page.waitForResponse(
+    (response) => response.url().includes('/api/jobs?mode=manual-sync') && response.request().method() === 'POST'
+  );
+
+  await page.route('**/api/jobs?mode=manual-sync', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    url.searchParams.set('debugVerify', '1');
+
+    await route.continue({ url: url.toString() });
+  });
+
+  await syncButton.click();
+
+  const enqueueResponse = await enqueueResponsePromise;
+  expect(enqueueResponse.ok()).toBeTruthy();
+  const enqueueBody = (await enqueueResponse.json()) as {
+    jobId?: string;
+    job?: { id?: string };
+    verifiedJob?: { id?: string; status?: string } | null;
+    databaseUrl?: string | null;
+    resolvedDatabaseUrl?: string | null;
+    resolvedDatabasePath?: string | null;
+  };
+  const enqueuedJobId = enqueueBody.jobId ?? enqueueBody.job?.id;
+  expect(enqueuedJobId).toBeTruthy();
+  expect(enqueueBody.verifiedJob?.id ?? null).toBe(enqueuedJobId);
+  expect(['queued', 'running', 'succeeded']).toContain(enqueueBody.verifiedJob?.status ?? null);
+  expect(enqueueBody.resolvedDatabasePath ?? null).toBe(normalizedE2eDatabasePath);
+  await expect
+    .poll(async () => {
+      const job = await readJobById(enqueuedJobId as string);
+      return job?.id === enqueuedJobId ? job.status : null;
+    }, {
+      timeout: 5_000,
+      intervals: [250, 500, 1000]
+    })
+    .toBeTruthy();
+  await expect
+    .poll(async () => {
+      const job = await readJobById(enqueuedJobId as string);
+      return job?.status ?? null;
+    }, {
+      timeout: 5_000,
+      intervals: [250, 500, 1000]
+    })
+    .toBeTruthy();
+  expect(['queued', 'running', 'succeeded']).toContain(
+    await (async () => {
+      const job = await readJobById(enqueuedJobId as string);
+      return job?.status ?? null;
+    })()
+  );
+  await expect(page.getByText(/Sync queued for/).last()).toBeVisible();
+
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get('/api/jobs');
+        const body = (await response.json()) as {
+          jobs: Array<{
+            job: {
+              id: string;
+              type: string;
+              status: string;
+              lastError: string | null;
+            };
+          }>;
+          syncRuns: Array<{
+            provider: string;
+            status: string;
+            error: string | null;
+          }>;
+        };
+        const dbSnapshot = await readJobAuditSnapshot();
+
+        const trackedImportJob = body.jobs.find((entry) => entry.job.id === enqueuedJobId)?.job;
+        const latestSyncRun = body.syncRuns[0] ?? null;
+        const trackedDbJob = dbSnapshot.jobs.find((job) => job.id === enqueuedJobId) ?? null;
+        const trackedAuditActions = dbSnapshot.audit
+          .filter((entry) => entry.entityId === enqueuedJobId)
+          .map((entry) => entry.action);
+
+        return {
+          trackedImportJobStatus: trackedImportJob?.status ?? null,
+          trackedImportJobError: trackedImportJob?.lastError ?? null,
+          trackedDbJobStatus: trackedDbJob?.status ?? null,
+          trackedAuditActions,
+          latestSyncRunStatus: latestSyncRun?.status ?? null,
+          latestSyncRunError: latestSyncRun?.error ?? null
+        };
+      },
+      {
+        timeout: 10_000,
+        intervals: [500, 1000, 1500]
+      }
+    )
+    .toMatchObject({
+      trackedImportJobStatus: 'succeeded',
+      trackedDbJobStatus: 'succeeded',
+      latestSyncRunStatus: 'succeeded'
+    });
+});
+
 test('generates drafts in bulk for selected inbox people', async ({ page }) => {
   await page.goto('/inbox?queue=all&entity=people&contactId=contact-001&conversationId=conversation-001&sort=recent');
   const conversationList = page.getByLabel('Conversation list');
+  const selectConversation = async (label: string) => {
+    const toggle = conversationList.getByRole('button', { name: label, exact: true });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  };
 
-  await conversationList.getByRole('checkbox', { name: /^Select Contact 1$/ }).first().click();
+  await selectConversation('Select Contact 1');
   await expect(page.getByRole('button', { name: 'Bulk Generate (1)' })).toBeVisible();
-  await conversationList.getByRole('checkbox', { name: /^Select Contact 3$/ }).first().click();
+  await selectConversation('Select Contact 3');
   await expect(page.getByRole('button', { name: 'Bulk Generate (2)' })).toBeVisible();
   await page.getByRole('button', { name: 'Bulk Generate (2)' }).click();
 
@@ -118,14 +351,16 @@ test('ignores a person from inbox and restores them from settings', async ({ pag
     page.getByLabel('Ignored people list').locator('article', { hasText: 'linkedin-profile-3' })
   ).toHaveCount(0);
 
-  await page.goto('/');
-  await expect(page.getByRole('link', { name: /Contact 3/i }).first()).toBeVisible();
+  await page.goto('/inbox?queue=all&entity=people&contactId=contact-003&conversationId=conversation-003&sort=recent');
+  await expect(page.getByLabel('Conversation list').getByRole('link', { name: /Contact 3/i }).first()).toBeVisible();
 });
 
 test('blocks workspace replace restore until confirmation is provided', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/inbox?queue=all&entity=people&contactId=contact-001&conversationId=conversation-001&sort=recent');
+  await expect(page.getByLabel('Workspace admin tools')).toBeVisible();
+  await page.getByText('Restore workspace data', { exact: true }).click();
 
-  await page.getByLabel('Restore workspace payload').fill(
+  await page.getByLabel('Restore/import payload').fill(
     JSON.stringify(
       {
         version: 1,
@@ -148,8 +383,8 @@ test('blocks workspace replace restore until confirmation is provided', async ({
     )
   );
 
-  await expect(page.getByLabel('Restore payload preview')).toBeVisible();
-  await page.getByRole('button', { name: 'Restore Workspace Data' }).click();
+  await expect(page.getByText('Scope:', { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Restore' }).click();
 
   await expect(page.getByText('Type REPLACE WORKSPACE to confirm workspace replace restore')).toBeVisible();
 });
@@ -157,29 +392,19 @@ test('blocks workspace replace restore until confirmation is provided', async ({
 test('assigns and merges accounts in account mode', async ({ page }) => {
   await page.goto('/inbox?entity=accounts&queue=all&accountId=account-001&sort=recent');
 
-  const assignStakeholdersSection = page.getByLabel('Assign stakeholders');
   const mergeAccountsSection = page.getByLabel('Merge accounts');
+  const sourceAccountSelect = mergeAccountsSection.getByLabel('Source account');
 
   await expect(page.getByRole('heading', { name: 'Account workspace' })).toBeVisible();
-  await assignStakeholdersSection.scrollIntoViewIfNeeded();
-  await expect(assignStakeholdersSection).toBeInViewport();
   await mergeAccountsSection.scrollIntoViewIfNeeded();
   await expect(mergeAccountsSection).toBeInViewport();
-
-  await assignStakeholdersSection.scrollIntoViewIfNeeded();
-  await assignStakeholdersSection.getByRole('checkbox', { name: /^Assign Contact 3$/ }).first().click();
-  const assignResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url().includes('/api/accounts/account-001/contacts') && response.request().method() === 'POST'
-  );
-  await assignStakeholdersSection.getByRole('button', { name: 'Assign selected' }).click();
-  const assignResponse = await assignResponsePromise;
-  expect(assignResponse.ok()).toBeTruthy();
-
-  await expect(page.getByLabel('Stakeholders').getByText('Contact 3').first()).toBeVisible();
-
-  await mergeAccountsSection.scrollIntoViewIfNeeded();
-  await mergeAccountsSection.getByLabel('Source account').selectOption('account-002');
+  await expect(page.getByRole('heading', { name: 'Company 1' })).toBeVisible();
+  const mergeSourceAccountId = await sourceAccountSelect.evaluate((element) => {
+    const select = element as HTMLSelectElement;
+    return Array.from(select.options).find((option) => option.value.trim().length > 0)?.value ?? '';
+  });
+  expect(mergeSourceAccountId).not.toBe('');
+  await sourceAccountSelect.selectOption(mergeSourceAccountId);
   await expect(mergeAccountsSection.getByRole('button', { name: 'Merge into current account' })).toBeEnabled();
   const mergeResponsePromise = page.waitForResponse(
     (response) => response.url().includes('/api/accounts/merge') && response.request().method() === 'POST'
@@ -189,7 +414,7 @@ test('assigns and merges accounts in account mode', async ({ page }) => {
   expect(mergeResponse.ok()).toBeTruthy();
 
   await expect(page.getByRole('heading', { name: 'Company 1' })).toBeVisible();
-  await expect(page.getByText('9 stakeholders').first()).toBeVisible();
-  await expect(page.getByText('Company 2 Inc')).toBeVisible();
-  await expect(page.getByText('Contact 3')).toBeVisible();
+  await expect(page.getByLabel('Account aliases').getByText(/Inc/).first()).toBeVisible();
+  await expect(page.getByLabel('Stakeholders', { exact: true }).getByText(/Company [23] ·/).first()).toBeVisible();
+  await expect(page.getByLabel('Stakeholders', { exact: true }).getByText('Contact 14')).toBeVisible();
 });

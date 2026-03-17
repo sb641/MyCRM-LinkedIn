@@ -4,6 +4,7 @@ import { createNodeDb as createDb } from '../../../packages/db/src/server/node-s
 import { createFileSessionStore, runImportThreads, sendBrowserMessage } from '@mycrm/automation';
 
 const logger = createLogger('worker');
+const WORKER_POLL_INTERVAL_MS = 1500;
 
 async function markSentDraft(databaseUrl: string | undefined, draftId: string, sentAt: number) {
   const { db: mutationDb, sqlite: mutationSqlite } = await createDb(databaseUrl);
@@ -21,7 +22,10 @@ async function countUnsuppressedImportedThreads(
   threadIds: string[] | undefined
 ) {
   if (!threadIds || threadIds.length === 0) {
-    return 0;
+    return {
+      importedCount: 0,
+      matchedConversationCount: 0
+    };
   }
 
   const { db: mutationDb, sqlite: mutationSqlite } = await createDb(databaseUrl);
@@ -136,11 +140,11 @@ export async function runWorkerCycle(databaseUrl?: string) {
         if (draftId) {
           const { db: mutationDb, sqlite: mutationSqlite } = await createDb(resolvedDatabaseUrl);
           try {
-            const repository = createMutationRepository(mutationDb, mutationSqlite);
-            const draft = await repository.findDraftForSend(draftId);
+            const mutationRepository = createMutationRepository(mutationDb, mutationSqlite);
+            const draft = await mutationRepository.findDraftForSend(draftId);
 
             if (draft?.sendStatus === 'sent') {
-              await repository.markDraftSent(draftId, draft.sentAt ?? Date.now());
+              await mutationRepository.markDraftSent(draftId, draft.sentAt ?? Date.now());
               await repository.markJobSucceeded(job.id);
               return { status: 'processed' as const, processedJobId: job.id };
             }
@@ -200,10 +204,39 @@ export async function runWorkerCycle(databaseUrl?: string) {
 
 export function startWorker() {
   const flags = getFeatureFlags();
+  let isRunningCycle = false;
+
+  const runNextCycle = async () => {
+    if (isRunningCycle) {
+      return;
+    }
+
+    isRunningCycle = true;
+
+    try {
+      const result = await runWorkerCycle();
+
+      if (result.status !== 'idle') {
+        logger.info(result, 'worker cycle finished');
+      }
+    } catch (error) {
+      logger.error({ error }, 'worker cycle crashed');
+    } finally {
+      isRunningCycle = false;
+    }
+  };
+
   logger.info({ flags }, 'worker booted');
+  void runNextCycle();
+  setInterval(() => {
+    void runNextCycle();
+  }, WORKER_POLL_INTERVAL_MS);
+
+
   return {
     status: 'idle' as const,
-    flags
+    flags,
+    pollIntervalMs: WORKER_POLL_INTERVAL_MS
   };
 }
 

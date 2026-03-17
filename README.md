@@ -6,7 +6,7 @@ Local-first LinkedIn conversation CRM MVP built as a TypeScript monorepo.
 
 Phase 12 (Hardening & Release) is in progress. The core application is feature-complete through Phase 11.
 
-Current work is focused on improving stability, testing, and documentation for daily local use. Real browser automation for sync and send operations remains intentionally stubbed and must be triggered manually from the UI.
+Current work is focused on improving stability, testing, and documentation for daily local use. The repository now has one primary local runtime: the working app with the web UI and worker running together.
 
 Primary progress tracker: `docs/implementation-plan.md`
 
@@ -18,16 +18,27 @@ Primary progress tracker: `docs/implementation-plan.md`
     ```
 
 2.  **Configure environment:**
-    Copy `.env.example` to `.env` and review the settings. The defaults are configured for a standard local-only run.
+    Copy `.env.example` to `.env` and review the settings. The defaults are configured for the working local runtime, including worker-backed browser sync.
     ```bash
     cp .env.example .env
     ```
 
 3.  **Run the application:**
-    This command starts the Next.js web app and the backend worker concurrently.
-    ```bash
-    pnpm dev
+    Use the main launcher:
+    ```bat
+    start-app.bat
     ```
+
+    It installs dependencies if needed, ensures the local runtime flags are enabled, starts the web app and worker in separate windows, and opens the app in the browser.
+
+4.  **If you want sync to attach to your already-open LinkedIn browser:**
+    Start Chrome with remote debugging enabled so Playwright can connect over CDP.
+    Example on Windows:
+    ```bat
+    "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222
+    ```
+
+    The default local configuration uses `CHROME_CDP_URL=http://127.0.0.1:9222`.
 
 The web interface will be available at `http://localhost:3000`.
 
@@ -38,9 +49,11 @@ The web interface will be available at `http://localhost:3000`.
 The application does not sync data automatically.
 
 1.  Navigate to the CRM workspace (`/`).
-2.  In the **Manual browser sync** panel, click **Queue browser sync**.
+2.  In the inbox workspace, click **Sync Conversations**.
 3.  This will create a `sync_run` record and queue an `import_threads` job for the worker.
-4.  Since real browser automation is not implemented, the job will eventually time out and await manual intervention or retry.
+4.  The worker processes that job and can invoke the Playwright-backed LinkedIn sync path when a reusable browser session is available.
+5.  The preferred live path is CDP reuse of an already-open Chrome session via `CHROME_CDP_URL`.
+6.  If sync does not progress, check that the worker window is running and that Chrome was started with `--remote-debugging-port=9222` or another configured CDP endpoint.
 
 ### Sending a Message
 
@@ -96,10 +109,15 @@ NODE_ENV=development
 # Path to the local SQLite database
 DATABASE_URL=file:./.mycrm/mycrm.sqlite
 
+# Browser reuse for live LinkedIn sync
+CHROME_CDP_URL=http://127.0.0.1:9222
+USER_DATA_DIR=
+PROXY_URL=
+
 # Enable/disable feature sets
 ENABLE_AI=false
-ENABLE_AUTOMATION=false
-ENABLE_REAL_BROWSER_SYNC=false
+ENABLE_AUTOMATION=true
+ENABLE_REAL_BROWSER_SYNC=true
 ENABLE_REAL_SEND=false
 
 # Structured logging level
@@ -111,7 +129,9 @@ GEMINI_API_KEY=
 
 ### Common Commands
 
--   `pnpm dev`: Run web and worker apps.
+-   `start-app.bat`: Start the working local app with web and worker in separate windows.
+-   `pnpm dev:web`: Run only the web app.
+-   `pnpm dev:worker`: Run only the worker.
 -   `pnpm lint`: Run ESLint.
 -   `pnpm typecheck`: Run TypeScript compiler.
 -   `pnpm build`: Build all apps and packages.
@@ -129,7 +149,7 @@ GEMINI_API_KEY=
     ```
 
 -   **Run End-to-End (E2E) tests:**
-    This runs Playwright tests against a dedicated, temporary database.
+    This is the dedicated test-only path and runs Playwright tests against a temporary database.
     ```bash
     pnpm --filter @mycrm/web test:e2e:run
     ```

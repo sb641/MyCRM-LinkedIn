@@ -19,6 +19,8 @@ const NAV_ITEMS = [
 
 export function CrmNav({ currentPath, isCollapsed, onToggleCollapse }: CrmNavProps) {
   const router = useRouter();
+  const primaryItems = NAV_ITEMS.slice(0, 4);
+  const secondaryItems = NAV_ITEMS.slice(4);
 
   return (
     <nav className={isCollapsed ? 'crm-nav is-collapsed' : 'crm-nav'} aria-label="Primary">
@@ -27,9 +29,10 @@ export function CrmNav({ currentPath, isCollapsed, onToggleCollapse }: CrmNavPro
           MC
         </div>
         {!isCollapsed ? (
-          <div>
+          <div className="crm-nav-brand-copy">
             <p className="eyebrow">MyCRM</p>
             <h1>Operator Console</h1>
+            <p className="crm-nav-brand-meta">LinkedIn workspace</p>
           </div>
         ) : null}
       </div>
@@ -42,27 +45,40 @@ export function CrmNav({ currentPath, isCollapsed, onToggleCollapse }: CrmNavPro
       >
         {isCollapsed ? '>' : '<'}
       </button>
+      <div className="crm-nav-section-label">Queue</div>
       <div className="crm-nav-links">
-        {NAV_ITEMS.map((item) => {
-          const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
-
-          return (
-            <button
-              type="button"
-              key={item.href}
-              className={isActive ? 'crm-nav-link active' : 'crm-nav-link'}
-              onClick={() => router.push(item.href)}
-              aria-label={item.label}
-              title={item.label}
-            >
-              <span className="crm-nav-link-icon" aria-hidden="true">
-                {item.shortLabel}
-              </span>
-              {!isCollapsed ? <span className="crm-nav-link-label">{item.label}</span> : null}
-            </button>
-          );
-        })}
+        {primaryItems.map((item) => renderNavItem(item, currentPath, isCollapsed, () => router.push(item.href)))}
+      </div>
+      <div className="crm-nav-spacer" />
+      <div className="crm-nav-section-label">Workspace</div>
+      <div className="crm-nav-links">
+        {secondaryItems.map((item) => renderNavItem(item, currentPath, isCollapsed, () => router.push(item.href)))}
       </div>
     </nav>
+  );
+}
+
+function renderNavItem(
+  item: (typeof NAV_ITEMS)[number],
+  currentPath: string,
+  isCollapsed: boolean,
+  onNavigate: () => void
+) {
+  const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
+
+  return (
+    <button
+      type="button"
+      key={item.href}
+      className={isActive ? 'crm-nav-link active' : 'crm-nav-link'}
+      onClick={onNavigate}
+      aria-label={item.label}
+      title={item.label}
+    >
+      <span className="crm-nav-link-icon" aria-hidden="true">
+        {item.shortLabel}
+      </span>
+      {!isCollapsed ? <span className="crm-nav-link-label">{item.label}</span> : null}
+    </button>
   );
 }

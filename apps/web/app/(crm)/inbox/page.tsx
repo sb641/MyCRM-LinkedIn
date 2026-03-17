@@ -5,7 +5,7 @@ import { getFeatureFlags } from '@mycrm/core';
 import { getAccountDetails, listAccounts } from '@/lib/services/accounts-service';
 import { listInboxItems, getContactConversationDetails } from '@/lib/services/inbox-service';
 import { getBrowserSession } from '@/lib/services/browser-session-service';
-import { listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
+import { getManualBrowserSyncReadiness, listImportThreadJobs, listSyncRuns } from '@/lib/services/jobs-service';
 import { listSettings } from '@/lib/services/settings-service';
 import { buildShellDataState, getShellRouteState } from '@/lib/crm-shell';
 import { buildInboxWorkspaceViewModel } from '@/lib/view-models/inbox';
@@ -35,6 +35,7 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
   const syncRunsResult = await safeLoad(() => listSyncRuns(undefined, 5));
   const jobsResult = await safeLoad(() => listImportThreadJobs());
   const browserSessionResult = await safeLoad(() => getBrowserSession('local-account'));
+  const linkedInSyncReadinessResult = await safeLoad(() => getManualBrowserSyncReadiness('local-account'));
   const settingsResult = await safeLoad(() => listSettings());
 
   const errorMessage = [
@@ -45,6 +46,7 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
     syncRunsResult.error,
     jobsResult.error,
     browserSessionResult.error,
+    linkedInSyncReadinessResult.error,
     settingsResult.error
   ].find((value) => value !== null) ?? null;
 
@@ -57,6 +59,7 @@ export default async function InboxPage({ searchParams }: InboxPageProps) {
     syncRuns: syncRunsResult.data ?? [],
     jobs: jobsResult.data ?? [],
     browserSession: browserSessionResult.data ?? null,
+    linkedInSyncReadiness: linkedInSyncReadinessResult.data ?? null,
     settings: settingsResult.data ?? [],
     errorMessage
   });

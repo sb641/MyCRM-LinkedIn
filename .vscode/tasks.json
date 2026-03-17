@@ -28,6 +28,8 @@
 			"type": "shell",
 			"command": "pnpm",
 			"args": [
+				"--filter",
+				"@mycrm/web",
 				"test:e2e:run"
 			],
 			"isBackground": false

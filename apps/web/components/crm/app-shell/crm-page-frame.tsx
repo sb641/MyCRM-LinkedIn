@@ -12,7 +12,9 @@ export function CrmPageFrame({ title, description, eyebrow, actions, children }:
   return (
     <section className="crm-route-frame">
       <CrmTopbar title={title} description={description} eyebrow={eyebrow} actions={actions} />
-      <div className="crm-route-body">{children}</div>
+      <div className="crm-route-body">
+        <div className="crm-route-body-inner">{children}</div>
+      </div>
     </section>
   );
 }

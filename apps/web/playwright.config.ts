@@ -1,10 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 import path from 'node:path';
 
-const e2eDatabaseUrl = 'file:./.e2e/playwright.sqlite';
 const workspaceRoot = path.resolve(__dirname, '../..');
 const webRoot = path.resolve(__dirname);
 const e2ePort = 3417;
+const e2eDatabaseUrl = `file:${path.join(workspaceRoot, '.e2e', 'playwright.sqlite').replace(/\\/g, '/')}`;
 
 export default defineConfig({
   testDir: './e2e',
@@ -19,7 +19,7 @@ export default defineConfig({
   webServer: {
     command: `pnpm --dir "${webRoot}" exec next dev --hostname 127.0.0.1 --port ${e2ePort}`,
     url: `http://127.0.0.1:${e2ePort}`,
-    reuseExistingServer: false,
+    reuseExistingServer: !process.env.CI,
     timeout: 120_000,
     env: {
       NODE_ENV: 'development',

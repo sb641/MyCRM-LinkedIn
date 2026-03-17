@@ -5,6 +5,7 @@ import type {
   DraftStatus,
   InboxItemDto,
   JobWithAuditDto,
+  LinkedInSyncReadinessDto,
   RelationshipStatus,
   SendStatus,
   SettingValueDto,
@@ -110,6 +111,7 @@ export type ShellDataState = {
   syncRuns: SyncRunViewModel[];
   activeSyncJob: SyncJobViewModel | null;
   browserSession: BrowserSessionViewModel | null;
+  linkedInSyncReadiness: LinkedInSyncReadinessViewModel | null;
   errorMessage: string | null;
   sort: InboxSortMode;
 };
@@ -119,6 +121,11 @@ export type BrowserSessionViewModel = {
   statusLabel: string;
   capturedAtLabel: string;
   userAgentLabel: string;
+};
+
+export type LinkedInSyncReadinessViewModel = LinkedInSyncReadinessDto & {
+  statusLabel: string;
+  tone: CrmBadgeTone;
 };
 
 export type SyncRunViewModel = SyncRunDto & {
@@ -192,6 +199,7 @@ export function buildShellDataState(args: {
     capturedAt: number;
     userAgent?: string | null;
   } | null;
+  linkedInSyncReadiness?: LinkedInSyncReadinessDto | null;
   errorMessage?: string | null;
 }): ShellDataState {
   const inbox = buildInboxListItems(args.inbox, args.route.sort);
@@ -203,6 +211,7 @@ export function buildShellDataState(args: {
   const syncRuns = buildSyncRunViewModels(args.syncRuns ?? []);
   const activeSyncJob = buildActiveSyncJobViewModel(args.jobs ?? []);
   const browserSession = buildBrowserSessionViewModel(args.browserSession ?? null);
+  const linkedInSyncReadiness = buildLinkedInSyncReadinessViewModel(args.linkedInSyncReadiness ?? null);
 
   if (args.errorMessage) {
     return {
@@ -216,6 +225,7 @@ export function buildShellDataState(args: {
       syncRuns,
       activeSyncJob,
       browserSession,
+      linkedInSyncReadiness,
       errorMessage: args.errorMessage,
       sort: args.route.sort
     };
@@ -233,6 +243,7 @@ export function buildShellDataState(args: {
       syncRuns,
       activeSyncJob,
       browserSession,
+      linkedInSyncReadiness,
       errorMessage: null,
       sort: args.route.sort
     };
@@ -249,8 +260,23 @@ export function buildShellDataState(args: {
     syncRuns,
     activeSyncJob,
     browserSession,
+    linkedInSyncReadiness,
     errorMessage: null,
     sort: args.route.sort
+  };
+}
+
+export function buildLinkedInSyncReadinessViewModel(
+  readiness: LinkedInSyncReadinessDto | null
+): LinkedInSyncReadinessViewModel | null {
+  if (!readiness) {
+    return null;
+  }
+
+  return {
+    ...readiness,
+    statusLabel: readiness.ready ? 'Ready for real sync' : 'Not ready for real sync',
+    tone: readiness.ready ? 'success' : 'warning'
   };
 }
 
@@ -282,7 +308,17 @@ export function buildBrowserSessionViewModel(session: {
 }
 
 export function buildActiveSyncJobViewModel(jobs: JobWithAuditDto[]): SyncJobViewModel | null {
-  const activeJob = jobs.find((entry) => ['queued', 'running', 'retry_scheduled'].includes(entry.job.status));
+  const now = Date.now();
+  const activeJob = jobs
+    .filter((entry) => ['queued', 'running', 'retry_scheduled'].includes(entry.job.status))
+    .filter((entry) => {
+      if (entry.job.status !== 'queued') {
+        return true;
+      }
+
+      return now - entry.job.updatedAt <= 2 * 60 * 1000;
+    })
+    .sort((left, right) => right.job.updatedAt - left.job.updatedAt)[0];
 
   if (!activeJob) {
     return null;

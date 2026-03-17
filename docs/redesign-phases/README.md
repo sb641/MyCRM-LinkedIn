@@ -1,35 +1,15 @@
-# Redesign Phase Plans
+# Redesign Plan Index
 
-This directory splits the master redesign playbook into one execution-ready plan per phase.
+This directory now serves as the index for two different redesign planning tracks in the repository.
+
+## 1. Legacy CRM Rebuild Track
+
+Use this track when the task refers to the earlier functional CRM rebuild roadmap.
 
 Source of truth:
 - `docs/redesign-phase-execution-playbook.md`
 
-How to use these documents:
-1. Mark the active phase as in progress in the working TODO list.
-2. Re-read the relevant phase plan before coding.
-3. Complete the full phase scope unless a hard blocker exists.
-4. Run the required validation for the changed surface.
-5. Post the phase report here in chat using the template in the phase document.
-6. Create a focused git commit for the phase.
-
-Mandatory execution rule for every phase:
-- The phase must start with a TODO update.
-- The phase must end with a report posted here in chat and a focused git commit.
-
-Global constraints inherited by every phase:
-- Single-user only.
-- One LinkedIn account per workspace.
-- Desktop-first UX.
-- Manual approval required for every outgoing message.
-- Reuse existing backend, APIs, worker, and tested flows wherever possible.
-- No full rewrite.
-- Preserve server-side read assembly and client-side mutation patterns.
-- Keep future compatibility with Vercel plus Postgres-like deployment.
-- Delete and Ignore must be soft-delete plus sync suppression plus restore.
-- Campaigns are single-action outreach containers, not sequences.
-
-Phase documents:
+Legacy phase documents in this directory:
 - `phase-01-route-based-crm-shell.md`
 - `phase-02-redesign-inbox-workspace.md`
 - `phase-03-drafts-review-page.md`
@@ -40,3 +20,46 @@ Phase documents:
 - `phase-08-delete-and-ignore.md`
 - `phase-09-tags-and-productivity.md`
 - `phase-10-command-palette-and-shortcuts.md`
+
+Use the legacy track when the task is about:
+- the original CRM rebuild sequence
+- schema and entity rollout from the older roadmap
+- older phase numbering from the execution playbook
+- implementation work already scoped to these legacy phase files
+
+## 2. Intercom-Style Redesign Track
+
+Use this track when the task refers to the newer operator-console redesign focused on density, layout, navigation behavior, and workflow ergonomics.
+
+Source of truth:
+- `docs/intercom-style-redesign-master-plan.md`
+
+Execution-ready phase files for this track live in:
+- `docs/intercom-redesign-phases/`
+
+Intercom-style phase documents:
+- `docs/intercom-redesign-phases/phase-00-ux-baseline-and-guardrails.md`
+- `docs/intercom-redesign-phases/phase-01-shell-and-collapsible-nav.md`
+- `docs/intercom-redesign-phases/phase-02-inbox-layout-overhaul.md`
+- `docs/intercom-redesign-phases/phase-03-draft-workspace-redesign.md`
+- `docs/intercom-redesign-phases/phase-04-accounts-workspace-redesign.md`
+- `docs/intercom-redesign-phases/phase-05-shared-visual-system-and-density.md`
+- `docs/intercom-redesign-phases/phase-06-responsive-and-edge-state-hardening.md`
+- `docs/intercom-redesign-phases/phase-07-regression-performance-release.md`
+
+Use the Intercom-style track when the task is about:
+- compact shell behavior
+- dense three-column inbox layout
+- draft and account workspace ergonomics
+- typography, spacing, and panel normalization
+- responsive hardening of the redesigned operator console
+
+## Context-Loading Rule
+
+To avoid pulling the whole application structure into context:
+
+1. Load only the source-of-truth master document for the active track.
+2. Load only one phase file for the current task.
+3. Add only the directly relevant code files after that.
+
+Do not mix the legacy and Intercom-style phase tracks in the same implementation context unless the task explicitly requires cross-reference.

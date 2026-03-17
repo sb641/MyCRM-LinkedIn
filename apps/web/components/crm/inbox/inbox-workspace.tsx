@@ -19,6 +19,22 @@ type InboxWorkspaceProps = {
   flags: FeatureFlags;
 };
 
+function SyncConversationsButton({
+  className,
+  isSyncing,
+  onClick
+}: {
+  className: string;
+  isSyncing: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button className={className} type="button" onClick={onClick} disabled={isSyncing}>
+      {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
+    </button>
+  );
+}
+
 export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -165,6 +181,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       contactName: item.contactName,
       company: item.company ?? null
     }));
+
+  const reminderEntityId = isAccountsMode
+    ? workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id ?? null
+    : workspace.details?.contact.id ?? workspace.selectedItem?.contactId ?? null;
+  const canManageReminder = reminderEntityId !== null;
 
   async function handleManualSync() {
     const accountId = syncAccountId.trim() || defaultAccountId;
@@ -457,9 +478,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
   async function handleSaveReminder(input: { dueAt: number; note: string }) {
     const entityType = isAccountsMode ? 'account' : 'contact';
-    const entityId = isAccountsMode
-      ? workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id
-      : workspace.details?.contact.id ?? workspace.selectedItem?.contactId;
+    const entityId = reminderEntityId;
 
     if (!entityId) {
       throw new Error('No record selected for reminder');
@@ -492,9 +511,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
   async function handleCompleteReminder() {
     const entityType = isAccountsMode ? 'account' : 'contact';
-    const entityId = isAccountsMode
-      ? workspace.accountDetails?.account.id ?? workspace.selectedAccount?.id
-      : workspace.details?.contact.id ?? workspace.selectedItem?.contactId;
+    const entityId = reminderEntityId;
 
     if (!entityId) {
       setReminderError('No record selected for reminder');
@@ -551,13 +568,23 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           </div>
           <div className="topbar-actions inbox-operator-actions" aria-label="Top bar actions">
             <div className="inbox-operator-action-group" aria-label="Sync and reminders">
-              <button className="ghost-button" type="button" onClick={handleManualSync} disabled={isSyncing}>
-                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
-              </button>
-              <button className="ghost-button" type="button" onClick={() => setIsReminderModalOpen(true)}>
+              <SyncConversationsButton className="ghost-button" isSyncing={isSyncing} onClick={handleManualSync} />
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setIsReminderModalOpen(true)}
+                disabled={!canManageReminder}
+                title={canManageReminder ? undefined : 'Select a record before setting a reminder'}
+              >
                 Set reminder
               </button>
-              <button className="ghost-button" type="button" onClick={handleCompleteReminder}>
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={handleCompleteReminder}
+                disabled={!canManageReminder}
+                title={canManageReminder ? undefined : 'Select a record before completing a reminder'}
+              >
                 Complete reminder
               </button>
             </div>
@@ -747,73 +774,69 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               <nav className="conversation-list dense-list queue-list" aria-label="Conversation list">
                 {visibleConversationItems.map((item) => {
                   const isActive = workspace.selectedItem?.contactId === item.contactId;
+                  const isSelected = selectedConversationIds.includes(item.conversationId);
 
                   return (
-                    <Link
+                    <div
                       key={item.conversationId}
-                      href={{
-                        pathname,
-                        query: buildQuery(searchParams, {
-                          contactId: item.contactId,
-                          conversationId: item.conversationId,
-                          queue: workspace.activeQueue,
-                          entity: workspace.entityMode,
-                          sort: state.sort
-                        })
-                      }}
                       className={isActive ? 'conversation-card active dense-card queue-list-item' : 'conversation-card dense-card queue-list-item'}
                     >
-                      <div className="queue-list-item-main">
-                        <div className="conversation-row conversation-row-selectable queue-list-item-topline">
-                          <label
-                            className="conversation-select-toggle"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                            }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selectedConversationIds.includes(item.conversationId)}
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }}
-                              onChange={() => toggleConversationSelection(item.conversationId)}
-                              aria-label={`Select ${item.contactName}`}
-                            />
-                          </label>
-                          <strong className="queue-list-item-title">{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
-                          <span className="subtle-pill">{item.relativeLastMessage}</span>
+                      <button
+                        className={isSelected ? 'conversation-select-toggle selected' : 'conversation-select-toggle'}
+                        type="button"
+                        aria-pressed={isSelected}
+                        aria-label={`Select ${item.contactName}`}
+                        onClick={() => toggleConversationSelection(item.conversationId)}
+                      >
+                        <input type="checkbox" checked={isSelected} readOnly tabIndex={-1} aria-hidden="true" />
+                      </button>
+                      <Link
+                        href={{
+                          pathname,
+                          query: buildQuery(searchParams, {
+                            contactId: item.contactId,
+                            conversationId: item.conversationId,
+                            queue: workspace.activeQueue,
+                            entity: workspace.entityMode,
+                            sort: state.sort
+                          })
+                        }}
+                        className="queue-list-item-link"
+                      >
+                        <div className="queue-list-item-main">
+                          <div className="conversation-row conversation-row-selectable queue-list-item-topline">
+                            <strong className="queue-list-item-title">{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
+                            <span className="subtle-pill">{item.relativeLastMessage}</span>
+                          </div>
+                          <p className="conversation-meta queue-list-item-meta">{item.company ?? 'Independent'}  b7 {item.headline ?? 'No headline yet'}</p>
+                          <p className="conversation-preview queue-list-item-preview">{item.lastMessageText ?? 'No messages yet'}</p>
                         </div>
-                        <p className="conversation-meta queue-list-item-meta">{item.company ?? 'Independent'} · {item.headline ?? 'No headline yet'}</p>
-                        <p className="conversation-preview queue-list-item-preview">{item.lastMessageText ?? 'No messages yet'}</p>
-                      </div>
-                      <div className="queue-list-item-side" onClick={(event) => event.preventDefault()}>
-                        <div className="quick-action-row queue-list-item-actions" aria-label="Conversation quick actions">
-                          <button
-                            className="mini-action intent-warning"
-                            type="button"
-                            onClick={() => setIgnoreTarget({ contactId: item.contactId, contactName: item.contactName })}
-                          >
-                            Ignore
-                          </button>
+                        <div className="queue-list-item-side" onClick={(event) => event.preventDefault()}>
+                          <div className="quick-action-row queue-list-item-actions" aria-label="Conversation quick actions">
+                            <button
+                              className="mini-action intent-warning"
+                              type="button"
+                              onClick={() => setIgnoreTarget({ contactId: item.contactId, contactName: item.contactName })}
+                            >
+                              Ignore
+                            </button>
+                          </div>
+                          <div className="chip-row queue-list-item-chips" aria-label="Conversation badges">
+                            {item.badges.map((badge) => (
+                              <span key={`${item.conversationId}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
+                                {badge.label}
+                              </span>
+                            ))}
+                            {item.reminderLabel && item.reminderTone ? (
+                              <ReminderBadge
+                                label={item.reminderLabel}
+                                tone={item.reminderTone === 'danger' ? 'danger' : item.reminderTone === 'warning' ? 'warning' : 'neutral'}
+                              />
+                            ) : null}
+                          </div>
                         </div>
-                        <div className="chip-row queue-list-item-chips" aria-label="Conversation badges">
-                          {item.badges.map((badge) => (
-                            <span key={`${item.conversationId}-${badge.label}`} className={`status-chip tone-${badge.tone}`}>
-                              {badge.label}
-                            </span>
-                          ))}
-                          {item.reminderLabel && item.reminderTone ? (
-                            <ReminderBadge
-                              label={item.reminderLabel}
-                              tone={item.reminderTone === 'danger' ? 'danger' : item.reminderTone === 'warning' ? 'warning' : 'neutral'}
-                            />
-                          ) : null}
-                        </div>
-                      </div>
-                    </Link>
+                      </Link>
+                    </div>
                   );
                 })}
               </nav>
@@ -828,9 +851,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                 <span>Account ID</span>
                 <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
               </label>
-              <button className="accent-button rail-action" type="button" onClick={handleManualSync} disabled={isSyncing}>
-                {isSyncing ? 'Syncing conversations...' : 'Sync Conversations'}
-              </button>
+              <SyncConversationsButton className="accent-button rail-action" isSyncing={isSyncing} onClick={handleManualSync} />
               {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
               {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
             </section>

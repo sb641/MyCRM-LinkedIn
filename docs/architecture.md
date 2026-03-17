@@ -105,4 +105,4 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - Mock adapters are the default path for tests and local development.
 - Real browser sync and real send remain disabled by default.
 - Sending stays user-triggered in later phases.
-- Phase 10 now uses the user-approved browser-driven send path: approved drafts can enqueue `send_message` jobs, the worker executes them through the automation send seam, duplicate queueing is deduped by `draftId`, and fake-provider coverage validates the post-send mutation path while the real Playwright send implementation remains intentionally stubbed.
+- Phase 10 now uses the user-approved browser-driven send path: approved drafts can enqueue `send_message` jobs, the worker executes them through the automation send seam, duplicate queueing is deduped by `draftId`, and both fake-provider coverage and real-browser provider wiring validate the post-send mutation path.

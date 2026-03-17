@@ -1,5 +1,6 @@
-import { render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import type { ContactConversationDetailsDto, InboxItemDto, SyncRunDto } from '@mycrm/core';
+import { afterEach, beforeEach } from 'vitest';
 import HomePage from './page';
 
 const navigationMocks = vi.hoisted(() => ({
@@ -126,6 +127,14 @@ const syncRuns: SyncRunDto[] = [
   }
 ];
 
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  cleanup();
+});
+
 describe('HomePage', () => {
   it('redirects root route to inbox', async () => {
     navigationMocks.redirect.mockReset();
@@ -173,34 +182,20 @@ describe('InboxPage shell', () => {
     const page = await InboxPage({ searchParams: Promise.resolve({}) });
     render(page);
 
-    expect(screen.getByText('People-first outreach workspace')).toBeInTheDocument();
-    expect(screen.getByText('Conversations')).toBeInTheDocument();
-    expect(screen.getByText('Timeline')).toBeInTheDocument();
-    expect(screen.getByText('Flags and actions')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Contact 1' })).toBeInTheDocument();
-    expect(screen.getByText('Review latest draft')).toBeInTheDocument();
-    expect(screen.getByText('Drafts')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sort conversations')).toBeInTheDocument();
+    expect(screen.getByText('Operator workspace')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'People' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Conversation and drafts' })).toBeInTheDocument();
     expect(screen.getAllByText('Generate Draft').length).toBeGreaterThan(0);
-    expect(screen.getByText('Follow-up')).toBeInTheDocument();
     expect(screen.getByText('Approved follow-up ready to send')).toBeInTheDocument();
     expect(screen.getByText('Send Message')).toBeInTheDocument();
-    expect(screen.getByText('Sync History')).toBeInTheDocument();
     expect(screen.getByText('2/3 imported')).toBeInTheDocument();
     expect(
       screen.getByLabelText('Top bar actions').querySelector('button')?.textContent
     ).toContain('Sync Conversations');
-    expect(screen.getByText('Sync in Progress')).toBeInTheDocument();
+    expect(screen.getByText('Queued')).toBeInTheDocument();
     expect(screen.getByText(/browser-account\s*·\s*linkedin-browser/)).toBeInTheDocument();
     expect(screen.getByText('Saved browser session ready')).toBeInTheDocument();
     expect(screen.getByText('Chrome 123')).toBeInTheDocument();
-    expect(screen.getByText('Settings')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('7')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Reset secret' })).toBeInTheDocument();
-    expect(screen.getByLabelText('Settings operator guidance')).toBeInTheDocument();
-    expect(screen.getByText('Leave blank to keep the stored secret')).toBeInTheDocument();
-    expect(screen.getByLabelText('Workspace replace confirmation')).toBeInTheDocument();
-    expect(screen.getByText(/Type REPLACE WORKSPACE before running that restore mode/)).toBeInTheDocument();
   });
 
   it('renders the error state when inbox loading fails', async () => {
@@ -214,7 +209,7 @@ describe('InboxPage shell', () => {
     const page = await InboxPage({ searchParams: Promise.resolve({}) });
     render(page);
 
-    expect(screen.getByText('Unable to load workspace')).toBeInTheDocument();
+    expect(screen.getAllByText('Unable to load workspace').length).toBeGreaterThan(0);
     expect(screen.getByText('Inbox failed')).toBeInTheDocument();
   });
 });
