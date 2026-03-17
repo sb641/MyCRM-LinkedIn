@@ -12,11 +12,41 @@ declare global {
   var __mycrmDbByUrl__: Map<string, Promise<ServerDb>> | undefined;
 }
 
+function resolveWorkspaceRoot(startDir = process.cwd()) {
+  let currentDir = path.resolve(startDir);
+
+  while (true) {
+    const packageJsonPath = path.join(currentDir, 'package.json');
+    const workspacePath = path.join(currentDir, 'pnpm-workspace.yaml');
+
+    if (fs.existsSync(packageJsonPath) && fs.existsSync(workspacePath)) {
+      return currentDir;
+    }
+
+    const parentDir = path.dirname(currentDir);
+    if (parentDir === currentDir) {
+      return path.resolve(startDir);
+    }
+
+    currentDir = parentDir;
+  }
+}
+
+function resolveDatabasePath(configured: string) {
+  const filePath = configured.startsWith('file:') ? configured.slice(5) : configured;
+
+  if (path.isAbsolute(filePath)) {
+    return filePath;
+  }
+
+  return path.resolve(resolveWorkspaceRoot(), filePath);
+}
+
 function resolveDatabaseUrl(databaseUrl?: string) {
   const configured = databaseUrl ?? getEnv().DATABASE_URL;
-  const filePath = configured.startsWith('file:') ? configured.slice(5) : configured;
+  const filePath = resolveDatabasePath(configured);
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  return configured;
+  return configured.startsWith('file:') ? `file:${filePath.replace(/\\/g, '/')}` : filePath;
 }
 
 export async function getDb(databaseUrl?: string) {
