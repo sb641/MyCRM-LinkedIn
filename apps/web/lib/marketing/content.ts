@@ -1,3 +1,5 @@
+import type { Route } from 'next';
+
 export const marketingRoutes = {
   home: '/',
   socialDemand: '/social-demand',
@@ -8,7 +10,7 @@ export const marketingRoutes = {
 
 export interface MarketingActionLink {
   label: string;
-  href: string;
+  href: Route | `#${string}`;
 }
 
 export interface HeroVisualContent {

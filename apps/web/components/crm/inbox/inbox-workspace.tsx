@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FeatureFlags } from '@mycrm/core';
 import type { ShellDataState } from '@/lib/crm-shell';
 import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
@@ -12,6 +12,47 @@ import { ReminderBadge } from '@/components/crm/shared/reminder-badge';
 import type { InboxWorkspaceViewModel } from '@/lib/view-models/inbox';
 
 const WORKSPACE_REPLACE_CONFIRMATION = 'REPLACE WORKSPACE';
+const SYNC_STATUS_POLL_INTERVAL_MS = 2000;
+
+type SyncDiagnosticsSnapshot = {
+  jobId: string | null;
+  accountId: string;
+  phase: 'idle' | 'queueing' | 'queued' | 'running' | 'completed' | 'failed' | 'stalled';
+  startedAt: number;
+  updatedAt: number;
+  lastMessage: string;
+  lastError: string | null;
+  pollCount: number;
+  activeJobStatus: string | null;
+  latestRunStatus: string | null;
+};
+
+function formatDuration(ms: number) {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+
+  return `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)}s`;
+}
+
+function formatSyncPhaseLabel(phase: SyncDiagnosticsSnapshot['phase']) {
+  switch (phase) {
+    case 'queueing':
+      return 'Queueing sync request';
+    case 'queued':
+      return 'Queued, waiting for worker pickup';
+    case 'running':
+      return 'Worker is running sync';
+    case 'completed':
+      return 'Sync completed';
+    case 'failed':
+      return 'Sync failed';
+    case 'stalled':
+      return 'Queued too long, worker may be offline';
+    default:
+      return 'Idle';
+  }
+}
 
 type InboxWorkspaceProps = {
   state: ShellDataState;
@@ -53,6 +94,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncAccountId, setSyncAccountId] = useState(defaultAccountId);
+  const [syncDiagnostics, setSyncDiagnostics] = useState<SyncDiagnosticsSnapshot | null>(null);
   const [isQueueingSend, setIsQueueingSend] = useState<string | null>(null);
   const [sendMessage, setSendMessage] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -93,6 +135,136 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const visibleConversationItems = workspace.visibleItems.filter(
     (item, index, items) => items.findIndex((candidate) => candidate.conversationId === item.conversationId) === index
   );
+  const syncPhaseLabel = syncDiagnostics ? formatSyncPhaseLabel(syncDiagnostics.phase) : null;
+  const syncElapsedLabel = syncDiagnostics ? formatDuration(Date.now() - syncDiagnostics.startedAt) : null;
+  const syncDebugLines = useMemo(() => {
+    if (!syncDiagnostics) {
+      return [] as string[];
+    }
+
+    return [
+      `phase=${syncDiagnostics.phase}`,
+      `job=${syncDiagnostics.jobId ?? 'n/a'}`,
+      `account=${syncDiagnostics.accountId}`,
+      `polls=${syncDiagnostics.pollCount}`,
+      `activeJob=${syncDiagnostics.activeJobStatus ?? 'none'}`,
+      `latestRun=${syncDiagnostics.latestRunStatus ?? 'none'}`,
+      `updated=${new Date(syncDiagnostics.updatedAt).toLocaleTimeString()}`
+    ];
+  }, [syncDiagnostics]);
+
+  useEffect(() => {
+    if (!syncDiagnostics?.jobId) {
+      return;
+    }
+
+    if (
+      syncDiagnostics.phase === 'completed' ||
+      syncDiagnostics.phase === 'failed' ||
+      syncDiagnostics.phase === 'stalled'
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollStatus = async () => {
+      try {
+        const response = await fetch('/api/jobs', {
+          method: 'GET',
+          cache: 'no-store'
+        });
+        const body = await response.json();
+
+        if (!response.ok || cancelled) {
+          return;
+        }
+
+        const jobs = Array.isArray(body.jobs) ? body.jobs : [];
+        const syncRuns = Array.isArray(body.syncRuns) ? body.syncRuns : [];
+        const matchingJob = jobs.find((entry: { job?: { id?: string; status?: string; lastError?: string | null } }) => entry?.job?.id === syncDiagnostics.jobId);
+        const matchingRun = syncRuns.find(
+          (entry: { provider?: string; status?: string; startedAt?: number; error?: string | null }) =>
+            entry?.provider === 'linkedin-browser' &&
+            typeof entry?.startedAt === 'number' &&
+            entry.startedAt >= syncDiagnostics.startedAt - 5_000
+        );
+
+        setSyncDiagnostics((current) => {
+          if (!current || current.jobId !== syncDiagnostics.jobId) {
+            return current;
+          }
+
+          const now = Date.now();
+          const jobStatus = matchingJob?.job?.status ?? null;
+          const runStatus = matchingRun?.status ?? null;
+          const queuedTooLong =
+            (jobStatus === 'queued' || jobStatus === null) && now - current.startedAt > 15_000;
+
+          let phase = current.phase;
+          let lastMessage = current.lastMessage;
+          let lastError = current.lastError;
+
+          if (runStatus === 'failed' || jobStatus === 'failed' || jobStatus === 'retry_scheduled') {
+            phase = 'failed';
+            lastError = matchingRun?.error ?? matchingJob?.job?.lastError ?? current.lastError;
+            lastMessage = lastError ? `Sync failed: ${lastError}` : 'Sync failed';
+          } else if (runStatus === 'completed' || jobStatus === 'succeeded') {
+            phase = 'completed';
+            lastMessage = 'Sync completed. Refresh inbox data to see imported conversations.';
+          } else if (runStatus === 'running' || jobStatus === 'running') {
+            phase = 'running';
+            lastMessage = 'Worker picked up the job and is syncing conversations.';
+          } else if (queuedTooLong) {
+            phase = 'stalled';
+            lastMessage = 'Job is still queued. Worker may be stopped or blocked.';
+          } else {
+            phase = 'queued';
+            lastMessage = 'Sync queued. Waiting for worker pickup.';
+          }
+
+          return {
+            ...current,
+            phase,
+            updatedAt: now,
+            lastMessage,
+            lastError,
+            pollCount: current.pollCount + 1,
+            activeJobStatus: jobStatus,
+            latestRunStatus: runStatus
+          };
+        });
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setSyncDiagnostics((current) => {
+          if (!current || current.jobId !== syncDiagnostics.jobId) {
+            return current;
+          }
+
+          return {
+            ...current,
+            updatedAt: Date.now(),
+            pollCount: current.pollCount + 1,
+            lastMessage: 'Status poll failed. Retrying...',
+            lastError: current.lastError
+          };
+        });
+      }
+    };
+
+    void pollStatus();
+    const intervalId = window.setInterval(() => {
+      void pollStatus();
+    }, SYNC_STATUS_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [syncDiagnostics?.jobId, syncDiagnostics?.phase, syncDiagnostics?.startedAt]);
 
   function refreshWorkspace(options?: {
     nextAccountId?: string | null;
@@ -192,6 +364,18 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
     setSyncMessage(null);
     setSyncError(null);
     setIsSyncing(true);
+    setSyncDiagnostics({
+      jobId: null,
+      accountId,
+      phase: 'queueing',
+      startedAt: Date.now(),
+      updatedAt: Date.now(),
+      lastMessage: 'Submitting manual sync request...',
+      lastError: null,
+      pollCount: 0,
+      activeJobStatus: null,
+      latestRunStatus: null
+    });
 
     try {
       const response = await fetch('/api/jobs?mode=manual-sync', {
@@ -203,12 +387,47 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       });
       const body = await response.json();
       if (!response.ok) {
-        throw new Error(body.message ?? body.error?.message ?? 'Unable to queue sync');
+        const checks = body?.details?.checks;
+        const checksSummary = checks
+          ? Object.entries(checks)
+              .map(([key, value]) => `${key}=${String(value)}`)
+              .join(', ')
+          : null;
+        const message = [body.message ?? body.error?.message ?? 'Unable to queue sync', checksSummary]
+          .filter(Boolean)
+          .join(' | ');
+        throw new Error(message);
       }
 
-      setSyncMessage(`Sync queued for ${body.jobId ?? body.job?.id ?? 'queued job'}`);
+      const jobId = body.jobId ?? body.job?.id ?? null;
+      setSyncMessage(`Sync queued for ${jobId ?? 'queued job'}`);
+      setSyncDiagnostics((current) => ({
+        jobId,
+        accountId,
+        phase: 'queued',
+        startedAt: current?.startedAt ?? Date.now(),
+        updatedAt: Date.now(),
+        lastMessage: `Sync queued for ${jobId ?? 'queued job'}`,
+        lastError: null,
+        pollCount: 0,
+        activeJobStatus: 'queued',
+        latestRunStatus: null
+      }));
     } catch (error) {
-      setSyncError(error instanceof Error ? error.message : 'Unable to queue sync');
+      const message = error instanceof Error ? error.message : 'Unable to queue sync';
+      setSyncError(message);
+      setSyncDiagnostics((current) => ({
+        jobId: current?.jobId ?? null,
+        accountId,
+        phase: 'failed',
+        startedAt: current?.startedAt ?? Date.now(),
+        updatedAt: Date.now(),
+        lastMessage: `Sync request failed: ${message}`,
+        lastError: message,
+        pollCount: current?.pollCount ?? 0,
+        activeJobStatus: current?.activeJobStatus ?? null,
+        latestRunStatus: current?.latestRunStatus ?? null
+      }));
     } finally {
       setIsSyncing(false);
     }
@@ -569,6 +788,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
           <div className="topbar-actions inbox-operator-actions" aria-label="Top bar actions">
             <div className="inbox-operator-action-group" aria-label="Sync and reminders">
               <SyncConversationsButton className="ghost-button" isSyncing={isSyncing} onClick={handleManualSync} />
+              {syncDiagnostics ? <div className="subtle-pill">{syncPhaseLabel}: {syncElapsedLabel}</div> : null}
               <button
                 className="ghost-button"
                 type="button"
@@ -808,7 +1028,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                             <strong className="queue-list-item-title">{workspace.entityMode === 'accounts' ? item.company ?? item.contactName : item.contactName}</strong>
                             <span className="subtle-pill">{item.relativeLastMessage}</span>
                           </div>
-                          <p className="conversation-meta queue-list-item-meta">{item.company ?? 'Independent'}  b7 {item.headline ?? 'No headline yet'}</p>
+                          <p className="conversation-meta queue-list-item-meta">{item.company ?? 'Independent'} · {item.headline ?? 'No headline yet'}</p>
                           <p className="conversation-preview queue-list-item-preview">{item.lastMessageText ?? 'No messages yet'}</p>
                         </div>
                         <div className="queue-list-item-side" onClick={(event) => event.preventDefault()}>
@@ -854,6 +1074,17 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               <SyncConversationsButton className="accent-button rail-action" isSyncing={isSyncing} onClick={handleManualSync} />
               {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
               {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
+              {syncDiagnostics ? (
+                <div className="generated-draft-preview" data-testid="sync-diagnostics">
+                  <strong>{syncPhaseLabel}</strong>
+                  <p>{syncDiagnostics.lastMessage}</p>
+                  <p>
+                    Elapsed: {syncElapsedLabel} · Last update: {new Date(syncDiagnostics.updatedAt).toLocaleTimeString()}
+                  </p>
+                  {syncDiagnostics.lastError ? <p className="generated-draft-error">{syncDiagnostics.lastError}</p> : null}
+                  <pre className="generated-draft-preview">{syncDebugLines.join('\n')}</pre>
+                </div>
+              ) : null}
             </section>
 
             <section className="rail-section inbox-rail-admin" aria-label="Workspace admin tools">

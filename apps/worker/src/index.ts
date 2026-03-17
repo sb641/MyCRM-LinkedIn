@@ -89,6 +89,16 @@ export async function runWorkerCycle(databaseUrl?: string) {
       return { status: 'idle' as const, processedJobId: null };
     }
 
+    logger.info(
+      {
+        jobId: job.id,
+        type: job.type,
+        attemptCount: job.attemptCount,
+        scheduledFor: job.scheduledFor
+      },
+      'worker claimed job'
+    );
+
     try {
       logger.info({ jobId: job.id, type: job.type }, 'worker processing job');
 
@@ -99,6 +109,16 @@ export async function runWorkerCycle(databaseUrl?: string) {
         const syncRunId = await syncRunRepository.createSyncRun({
           provider: typeof payload.provider === 'string' ? payload.provider : 'fake-linkedin'
         });
+
+        logger.info(
+          {
+            jobId: job.id,
+            syncRunId,
+            accountId: typeof payload.accountId === 'string' ? payload.accountId : null,
+            provider: typeof payload.provider === 'string' ? payload.provider : 'fake-linkedin'
+          },
+          'worker started import sync run'
+        );
 
         try {
           const result = await runImportThreads(payload, {
@@ -119,6 +139,15 @@ export async function runWorkerCycle(databaseUrl?: string) {
             itemsScanned: result.itemsScanned,
             itemsImported
           });
+          logger.info(
+            {
+              jobId: job.id,
+              syncRunId,
+              itemsScanned: result.itemsScanned,
+              itemsImported
+            },
+            'worker finished import sync run'
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown import error';
           await syncRunRepository.markSyncRunFinished({
@@ -128,6 +157,7 @@ export async function runWorkerCycle(databaseUrl?: string) {
             itemsImported: 0,
             error: message
           });
+          logger.error({ jobId: job.id, syncRunId, error: message }, 'worker import sync run failed');
           throw error;
         }
       }
@@ -160,6 +190,15 @@ export async function runWorkerCycle(databaseUrl?: string) {
             sessionStore: createFileSessionStore()
           });
 
+          logger.info(
+            {
+              jobId: job.id,
+              draftId: result.draftId,
+              sentAt: result.sentAt
+            },
+            'worker browser send completed'
+          );
+
           const updated = await markSentDraft(resolvedDatabaseUrl, result.draftId, result.sentAt);
 
           if (updated === 0) {
@@ -188,6 +227,7 @@ export async function runWorkerCycle(databaseUrl?: string) {
       return { status: 'processed' as const, processedJobId: job.id };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown worker error';
+      logger.error({ jobId: job.id, type: job.type, error: message }, 'worker job failed');
       await repository.markJobFailed(job.id, message);
       const jobs = await repository.listJobs();
       const updatedJob = jobs.find((item) => item.id === job.id);

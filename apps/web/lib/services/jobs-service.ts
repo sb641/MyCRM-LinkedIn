@@ -11,7 +11,38 @@ import {
   getEnv
 } from '@mycrm/core';
 import { createJobRepository, createSyncRunRepository, getDb } from '@mycrm/db/server';
-import { createBrowserSyncProvider, createFileSessionStore } from '@mycrm/automation';
+import { getBrowserSession } from '@/lib/services/browser-session-service';
+
+type BrowserCookie = {
+  name?: string;
+  value?: string;
+  domain?: string;
+};
+
+function hasUsableSavedSession(cookiesJson: string | null | undefined) {
+  if (!cookiesJson?.trim()) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(cookiesJson) as BrowserCookie[];
+    if (!Array.isArray(parsed)) {
+      return false;
+    }
+
+    return parsed.some(
+      (cookie) =>
+        typeof cookie?.name === 'string' &&
+        cookie.name.length > 0 &&
+        cookie.name !== 'legacy_profile_imported' &&
+        typeof cookie.value === 'string' &&
+        cookie.value.length > 0 &&
+        (typeof cookie.domain !== 'string' || cookie.domain.includes('linkedin.com'))
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function listJobs(databaseUrl?: string) {
   const { db, sqlite } = await getDb(databaseUrl);
@@ -129,9 +160,8 @@ export async function listImportThreadJobs(databaseUrl?: string): Promise<JobWit
 
 export async function getManualBrowserSyncReadiness(accountId: string) {
   const env = getEnv();
-  const sessionStore = createFileSessionStore();
-  const savedSession = await sessionStore.load(accountId);
-  const hasSavedSession = Boolean(savedSession?.cookiesJson?.trim());
+  const savedSession = await getBrowserSession(accountId);
+  const hasSavedSession = hasUsableSavedSession(savedSession?.cookiesJson);
   const hasCdpUrl = Boolean(env.CHROME_CDP_URL?.trim());
   const hasUserDataDir = Boolean(env.USER_DATA_DIR?.trim());
 
@@ -207,14 +237,8 @@ async function assertManualBrowserSyncReady(input: { accountId: string; provider
     });
   }
 
-  try {
-    await createBrowserSyncProvider(input, {
-      enableRealBrowserSync: true,
-      sessionStore: createFileSessionStore()
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'LinkedIn browser sync is not ready.';
-    throw new AppError(message, {
+  if (!readiness.checks.hasCdpUrl && !readiness.checks.hasUserDataDir && !readiness.checks.hasSavedSession) {
+    throw new AppError('LinkedIn browser sync is not ready.', {
       code: 'MANUAL_SYNC_NOT_READY',
       status: 400,
       details: {

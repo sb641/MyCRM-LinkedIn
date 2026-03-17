@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { Route } from 'next';
 import type { HeroSectionContent } from '@/lib/marketing/content';
 
 interface HeroSplitDiagramProps {
@@ -39,6 +40,17 @@ function DiagramColumn({
 }
 
 export function HeroSplitDiagram({ content }: HeroSplitDiagramProps) {
+  const primaryCta = renderCta(
+    content.primaryCta.href,
+    content.primaryCta.label,
+    'inline-flex min-h-12 items-center justify-center rounded-[12px] bg-[#10263f] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#0e2135]'
+  );
+  const secondaryCta = renderCta(
+    content.secondaryCta.href,
+    content.secondaryCta.label,
+    'inline-flex min-h-12 items-center justify-center rounded-[12px] border border-[#d9e2e8] bg-white px-5 text-sm font-semibold text-[#10263f] transition-colors hover:bg-[#f1f4f6]'
+  );
+
   return (
     <section className="relative overflow-hidden bg-[#f7f8f5] px-5 py-[72px] md:px-6 lg:px-8 lg:py-[104px]">
       <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top_left,rgba(15,118,110,0.12),transparent_45%)]" />
@@ -55,18 +67,8 @@ export function HeroSplitDiagram({ content }: HeroSplitDiagramProps) {
             {content.body}
           </p>
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-            <Link
-              href={content.primaryCta.href}
-              className="inline-flex min-h-12 items-center justify-center rounded-[12px] bg-[#10263f] px-5 text-sm font-semibold text-white transition-colors hover:bg-[#0e2135]"
-            >
-              {content.primaryCta.label}
-            </Link>
-            <Link
-              href={content.secondaryCta.href}
-              className="inline-flex min-h-12 items-center justify-center rounded-[12px] border border-[#d9e2e8] bg-white px-5 text-sm font-semibold text-[#10263f] transition-colors hover:bg-[#f1f4f6]"
-            >
-              {content.secondaryCta.label}
-            </Link>
+            {primaryCta}
+            {secondaryCta}
           </div>
           <p className="mt-5 text-sm leading-6 text-[#5e6b79]">{content.supportingLine}</p>
         </div>
@@ -99,5 +101,21 @@ export function HeroSplitDiagram({ content }: HeroSplitDiagramProps) {
         </div>
       </div>
     </section>
+  );
+}
+
+function renderCta(href: HeroSectionContent['primaryCta']['href'], label: string, className: string) {
+  if (href.startsWith('#')) {
+    return (
+      <a href={href} className={className}>
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <Link href={href as Route} className={className}>
+      {label}
+    </Link>
   );
 }
