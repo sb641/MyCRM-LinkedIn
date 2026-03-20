@@ -1,7 +1,30 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { chromium } from '@playwright/test';
+import { spawn } from 'node:child_process';
+import { chromium } from 'playwright';
+import {
+  getLinkedInAuthBootstrapState,
+  readLegacyEnvConfig,
+  type LegacyEnvConfig,
+  isChromeCdpReachable,
+  __authConfigTestables
+} from './auth-config';
+import {
+  createFileSessionStore,
+  FileSessionStore,
+  InMemorySessionStore,
+  type SessionState,
+  type SessionStore
+} from './session-store';
+
+export {
+  createFileSessionStore,
+  FileSessionStore,
+  InMemorySessionStore,
+  type SessionState,
+  type SessionStore
+} from './session-store';
 
 import { sampleContact } from '@mycrm/test-fixtures';
 import {
@@ -10,6 +33,7 @@ import {
   sendMessagePayloadSchema,
   sendMessageResultSchema
 } from '@mycrm/core';
+import { createMutationRepository } from '@mycrm/db';
 
 export interface ThreadSummary {
   id: string;
@@ -27,26 +51,6 @@ export interface MessageRecord {
   body: string;
   sentAt: number;
 }
-
-export interface SessionState {
-  accountId: string;
-  cookiesJson: string;
-  userAgent: string;
-  capturedAt: number;
-}
-
-export interface SessionStore {
-  load(accountId: string): Promise<SessionState | null>;
-  save(session: SessionState): Promise<void>;
-}
-
-type LegacyEnvConfig = {
-  userDataDir: string | null;
-  proxyUrl: string | null;
-  cdpUrl: string | null;
-  linkedinUsername: string | null;
-  linkedinPassword: string | null;
-};
 
 export interface ParsedThreadFixture {
   thread: ThreadSummary;
@@ -74,139 +78,27 @@ export type BrowserSyncOptions = {
   enableRealBrowserSync: boolean;
   enableRealSend?: boolean;
   sessionStore?: SessionStore;
+  db?: Parameters<typeof createMutationRepository>[0];
+  sqlite?: Parameters<typeof createMutationRepository>[1];
 };
 
-export class InMemorySessionStore implements SessionStore {
-  private readonly sessions = new Map<string, SessionState>();
+type BrowserSyncProviderResolution = {
+  provider: MessagingProvider;
+  providerKind: 'cdp' | 'saved-session' | 'direct-profile' | 'persistent-profile' | 'credential-bootstrap';
+  fallbackReason?: string;
+};
 
-  async load(accountId: string): Promise<SessionState | null> {
-    return this.sessions.get(accountId) ?? null;
-  }
-
-  async save(session: SessionState): Promise<void> {
-    this.sessions.set(session.accountId, session);
-  }
-}
-
-export class FileSessionStore implements SessionStore {
-  constructor(private readonly rootDir: string) {}
-
-  private getSessionPath(accountId: string) {
-    const safeAccountId = accountId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    return path.join(this.rootDir, `${safeAccountId}.json`);
-  }
-
-  async load(accountId: string): Promise<SessionState | null> {
-    try {
-      const raw = await fs.readFile(this.getSessionPath(accountId), 'utf8');
-      return JSON.parse(raw) as SessionState;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return null;
-      }
-
-      throw error;
-    }
-  }
-
-  async save(session: SessionState): Promise<void> {
-    await fs.mkdir(this.rootDir, { recursive: true });
-    await fs.writeFile(this.getSessionPath(session.accountId), JSON.stringify(session, null, 2), 'utf8');
-  }
-}
-
-async function resolveWorkspaceRoot(startDir = process.cwd()) {
-  let currentDir = path.resolve(startDir);
-
-  while (true) {
-    const packageJsonPath = path.join(currentDir, 'package.json');
-    const workspacePath = path.join(currentDir, 'pnpm-workspace.yaml');
-
-    try {
-      await fs.access(packageJsonPath);
-      await fs.access(workspacePath);
-      return currentDir;
-    } catch {
-      const parentDir = path.dirname(currentDir);
-      if (parentDir === currentDir) {
-        return path.resolve(startDir);
-      }
-
-      currentDir = parentDir;
-    }
-  }
-}
-
-export function createFileSessionStore(rootDir?: string) {
-  if (rootDir) {
-    return new FileSessionStore(rootDir);
-  }
-
-  const fallbackRoot = path.resolve(process.cwd(), '.mycrm', 'sessions');
-  const store = new FileSessionStore(fallbackRoot);
-
-  return {
-    load: async (accountId: string) => {
-      const workspaceRoot = await resolveWorkspaceRoot();
-      const workspaceStore = new FileSessionStore(path.resolve(workspaceRoot, '.mycrm', 'sessions'));
-      return workspaceStore.load(accountId);
-    },
-    save: async (session: SessionState) => {
-      const workspaceRoot = await resolveWorkspaceRoot();
-      const workspaceStore = new FileSessionStore(path.resolve(workspaceRoot, '.mycrm', 'sessions'));
-      await workspaceStore.save(session);
-    }
-  } satisfies SessionStore;
-}
-
-async function readLegacyEnvConfig(projectRoot = process.cwd()): Promise<LegacyEnvConfig> {
+async function createLegacyImportedCookies(userDataDir: string) {
+  const cookiesPath = path.resolve(userDataDir, 'Network', 'Cookies');
   try {
-    const workspaceRoot = await resolveWorkspaceRoot(projectRoot);
-    const envPath = path.resolve(workspaceRoot, '.env');
-    const raw = await fs.readFile(envPath, 'utf8');
-    const values = new Map<string, string>();
-
-    for (const line of raw.split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) {
-        continue;
-      }
-
-      const separatorIndex = trimmed.indexOf('=');
-      if (separatorIndex <= 0) {
-        continue;
-      }
-
-      const key = trimmed.slice(0, separatorIndex).trim();
-      const value = trimmed.slice(separatorIndex + 1).trim();
-      values.set(key, value);
-    }
-
-    return {
-      userDataDir: values.get('USER_DATA_DIR') ?? null,
-      proxyUrl: values.get('PROXY_URL') ?? null,
-      cdpUrl: values.get('CHROME_CDP_URL') ?? null,
-      linkedinUsername: values.get('LINKEDIN_USERNAME') ?? null,
-      linkedinPassword: values.get('LINKEDIN_PASSWORD') ?? null
-    };
+    await fs.access(cookiesPath);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return {
-        userDataDir: null,
-        proxyUrl: null,
-        cdpUrl: null,
-        linkedinUsername: null,
-        linkedinPassword: null
-      };
+      return null;
     }
 
     throw error;
   }
-}
-
-async function createLegacyImportedCookies(userDataDir: string) {
-  const cookiesPath = path.resolve(userDataDir, 'Network', 'Cookies');
-  await fs.access(cookiesPath);
 
   return JSON.stringify([
     {
@@ -240,6 +132,54 @@ function normalizeChromeProfilePath(userDataDir: string) {
   };
 }
 
+async function resolvePreferredChromeProfileDirectory(userDataDir: string) {
+  const localStatePath = path.join(userDataDir, 'Local State');
+
+  try {
+    const raw = await fs.readFile(localStatePath, 'utf8');
+    const parsed = JSON.parse(raw) as {
+      profile?: {
+        last_used?: string;
+        info_cache?: Record<
+          string,
+          {
+            name?: string;
+            user_name?: string;
+            gaia_name?: string;
+            is_using_default_name?: boolean;
+            active_time?: number;
+          }
+        >;
+      };
+    };
+
+    const infoCache = parsed.profile?.info_cache ?? {};
+    const preferredEntry = Object.entries(infoCache)
+      .filter(([key, value]) => key && key !== 'undefined')
+      .map(([key, value]) => ({
+        key,
+        score:
+          (value?.user_name?.trim() ? 4 : 0) +
+          (value?.gaia_name?.trim() ? 2 : 0) +
+          (value?.is_using_default_name === false ? 1 : 0)
+      }))
+      .sort((left, right) => right.score - left.score)[0];
+
+    if (preferredEntry && preferredEntry.score > 0 && (await pathExists(path.join(userDataDir, preferredEntry.key)))) {
+      return preferredEntry.key;
+    }
+
+    const lastUsed = parsed.profile?.last_used?.trim();
+    if (lastUsed && (await pathExists(path.join(userDataDir, lastUsed)))) {
+      return lastUsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function hasUsableLinkedInCookies(session: SessionState) {
   try {
     const parsed = JSON.parse(session.cookiesJson) as BrowserCookie[];
@@ -261,11 +201,67 @@ function hasUsableLinkedInCookies(session: SessionState) {
   }
 }
 
+function hasUsableLinkedInCookiesJson(cookiesJson: string) {
+  try {
+    const parsed = JSON.parse(cookiesJson) as BrowserCookie[];
+    if (!Array.isArray(parsed)) {
+      return false;
+    }
+
+    return parsed.some(
+      (cookie) =>
+        typeof cookie?.name === 'string' &&
+        cookie.name.length > 0 &&
+        cookie.name !== 'legacy_profile_imported' &&
+        typeof cookie.value === 'string' &&
+        cookie.value.length > 0 &&
+        (cookie.domain?.includes('linkedin.com') ?? true)
+    );
+  } catch {
+    return false;
+  }
+}
+
+const EXCLUDED_DIRS = new Set([
+  'Cache',
+  'Code Cache',
+  'DawnCache',
+  'GPUCache',
+  'Media Cache',
+  'System Cache',
+  'VideoDecodeStats',
+  'Service Worker',
+  'Crashpad',
+  'component_updater',
+  'OptGuideOnDeviceModel',
+  'OptimizationGuideDictionary',
+  'Safe Browsing',
+  'Sessions'
+]);
+
 async function copyDirectorySkippingBusyFiles(sourceDir: string, targetDir: string) {
-  await fs.mkdir(targetDir, { recursive: true });
-  const entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  try {
+    await fs.mkdir(targetDir, { recursive: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOSPC' || code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') {
+      return;
+    }
+    throw error;
+  }
+
+  let entries;
+  try {
+    entries = await fs.readdir(sourceDir, { withFileTypes: true });
+  } catch (error) {
+    return;
+  }
 
   for (const entry of entries) {
+    if (entry.isDirectory() && EXCLUDED_DIRS.has(entry.name)) {
+      continue;
+    }
+
     const sourcePath = path.join(sourceDir, entry.name);
     const targetPath = path.join(targetDir, entry.name);
 
@@ -282,13 +278,76 @@ async function copyDirectorySkippingBusyFiles(sourceDir: string, targetDir: stri
       await fs.copyFile(sourcePath, targetPath);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES') {
+      if (code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'ENOSPC') {
         continue;
       }
 
       throw error;
     }
   }
+}
+
+async function pathExists(targetPath: string) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolvePersistentProfileSource(
+  userDataDir: string,
+  profileDirectory?: string
+): Promise<{ sourceUserDataDir: string; launchProfileDirectory?: string }> {
+  const normalizedUserDataDir = path.resolve(userDataDir);
+
+  if (!profileDirectory) {
+    const preferredProfileDirectory = await resolvePreferredChromeProfileDirectory(normalizedUserDataDir);
+    if (preferredProfileDirectory) {
+      return {
+        sourceUserDataDir: normalizedUserDataDir,
+        launchProfileDirectory: preferredProfileDirectory
+      };
+    }
+
+    return {
+      sourceUserDataDir: normalizedUserDataDir,
+      launchProfileDirectory: undefined
+    };
+  }
+
+  const directProfileDir = path.join(normalizedUserDataDir, profileDirectory);
+  if (await pathExists(directProfileDir)) {
+    return {
+      sourceUserDataDir: normalizedUserDataDir,
+      launchProfileDirectory: profileDirectory
+    };
+  }
+
+  const normalizedBaseName = path.basename(normalizedUserDataDir);
+  if (normalizedBaseName.localeCompare(profileDirectory, undefined, { sensitivity: 'accent' }) === 0) {
+    return {
+      sourceUserDataDir: normalizedUserDataDir,
+      launchProfileDirectory: undefined
+    };
+  }
+
+  const knownProfileCandidates = ['Default', 'Profile 1', 'Profile 2', 'Profile 3'];
+  for (const candidate of knownProfileCandidates) {
+    const candidateDir = path.join(normalizedUserDataDir, candidate);
+    if (await pathExists(candidateDir)) {
+      return {
+        sourceUserDataDir: normalizedUserDataDir,
+        launchProfileDirectory: candidate
+      };
+    }
+  }
+
+  return {
+    sourceUserDataDir: normalizedUserDataDir,
+    launchProfileDirectory: undefined
+  };
 }
 
 export async function loginAndSaveSession(accountId: string, sessionStore: SessionStore, legacyConfig: LegacyEnvConfig) {
@@ -357,6 +416,294 @@ export async function loginAndSaveSession(accountId: string, sessionStore: Sessi
   }
 }
 
+export async function bootstrapLinkedInSession(accountId: string, sessionStore: SessionStore) {
+  const { legacyConfig } = await getLinkedInAuthBootstrapState();
+  let lastBootstrapError: unknown = null;
+
+  const configuredCdpUrl = legacyConfig.cdpUrl?.trim() ?? '';
+  if (configuredCdpUrl && (await isChromeCdpReachable(configuredCdpUrl))) {
+    const browser = await chromium.connectOverCDP(configuredCdpUrl);
+
+    try {
+      const context = browser.contexts()[0] ?? (await browser.newContext());
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
+      const readyState = await waitForLinkedInMessagingReady(page, 20000);
+
+      if (
+        readyState.href.includes('/login') ||
+        readyState.href.includes('/uas/login') ||
+        readyState.href.includes('/checkpoint') ||
+        readyState.href.includes('/challenge')
+      ) {
+        throw new Error(
+          `Configured Chrome DevTools session did not reach an authenticated LinkedIn messaging page for account ${accountId}. url=${readyState.href}`
+        );
+      }
+
+      const cookies = await context.cookies('https://www.linkedin.com');
+      const cookiesJson = JSON.stringify(
+        cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          expires: cookie.expires,
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite: cookie.sameSite as BrowserCookie['sameSite']
+        }))
+      );
+
+      if (!hasUsableLinkedInCookiesJson(cookiesJson)) {
+        throw new Error(
+          `Configured Chrome DevTools session reached ${readyState.href} but did not expose usable LinkedIn cookies for account ${accountId}.`
+        );
+      }
+
+      const session: SessionState = {
+        accountId,
+        cookiesJson,
+        userAgent: await page.evaluate(() => navigator.userAgent).catch(() => getDefaultLinkedInUserAgent()),
+        capturedAt: Date.now()
+      };
+
+      await sessionStore.save(session);
+      return session;
+    } finally {
+      await browser.close();
+    }
+  }
+
+  if (legacyConfig.userDataDir) {
+    try {
+      return await captureLinkedInSessionFromDirectPersistentProfile(accountId, sessionStore);
+    } catch (directProfileError) {
+      lastBootstrapError = directProfileError;
+      debugLog('direct persistent-profile bootstrap failed', directProfileError);
+
+      try {
+        return await captureLinkedInSessionFromChromeProfile(accountId, sessionStore);
+      } catch (cdpProfileError) {
+        lastBootstrapError = cdpProfileError;
+        debugLog('chrome-profile CDP bootstrap failed', cdpProfileError);
+      }
+    }
+  }
+
+  const session = await loginAndSaveSession(accountId, sessionStore, legacyConfig);
+
+  if (!session || !hasUsableLinkedInCookies(session)) {
+    if (lastBootstrapError) {
+      throw lastBootstrapError;
+    }
+
+    throw new Error(
+      `LinkedIn credential bootstrap is not configured for account ${accountId}. Set LINKEDIN_USERNAME and LINKEDIN_PASSWORD in the workspace environment.`
+    );
+  }
+
+  return session;
+}
+
+async function waitForChromeCdp(url: string, timeoutMs: number) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (await isChromeCdpReachable(url)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+
+  throw new Error(`Timed out waiting for Chrome DevTools at ${url}.`);
+}
+
+function getChromeExecutablePath() {
+  return 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+}
+
+export async function captureLinkedInSessionFromChromeProfile(accountId: string, sessionStore: SessionStore) {
+  const { legacyConfig } = await getLinkedInAuthBootstrapState();
+  if (!legacyConfig.userDataDir) {
+    throw new Error(`Chrome profile capture is not configured for account ${accountId}. Set USER_DATA_DIR first.`);
+  }
+
+  const normalizedProfile = normalizeChromeProfilePath(legacyConfig.userDataDir);
+  const cdpPort = 9223;
+  const cdpUrl = `http://127.0.0.1:${cdpPort}`;
+  const chromeProcess = spawn(
+    getChromeExecutablePath(),
+    [
+      `--remote-debugging-port=${cdpPort}`,
+      `--user-data-dir=${normalizedProfile.userDataDir}`,
+      `--profile-directory=${normalizedProfile.profileDirectory}`,
+      '--no-first-run',
+      '--no-default-browser-check',
+      'https://www.linkedin.com/messaging/'
+    ],
+    {
+      detached: false,
+      stdio: 'ignore',
+      windowsHide: false
+    }
+  );
+
+  try {
+    await waitForChromeCdp(cdpUrl, 20000);
+    const browser = await chromium.connectOverCDP(cdpUrl);
+
+    try {
+      const context = browser.contexts()[0] ?? (await browser.newContext());
+      const page = context.pages()[0] ?? (await context.newPage());
+      await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
+      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => undefined);
+
+      if (page.url().includes('/login') || page.url().includes('/checkpoint') || page.url().includes('/challenge')) {
+        throw new Error(
+          `LinkedIn session capture did not reach an authenticated messaging page for account ${accountId}. url=${page.url()}`
+        );
+      }
+
+      const cookies = await context.cookies('https://www.linkedin.com');
+      const cookiesJson = JSON.stringify(
+        cookies.map((cookie) => ({
+          name: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain,
+          path: cookie.path,
+          expires: cookie.expires,
+          httpOnly: cookie.httpOnly,
+          secure: cookie.secure,
+          sameSite: cookie.sameSite as BrowserCookie['sameSite']
+        }))
+      );
+
+      const session: SessionState = {
+        accountId,
+        cookiesJson,
+        userAgent: await page.evaluate(() => navigator.userAgent).catch(() => getDefaultLinkedInUserAgent()),
+        capturedAt: Date.now()
+      };
+
+      await sessionStore.save(session);
+      return session;
+    } finally {
+      await browser.close();
+    }
+  } finally {
+    chromeProcess.kill();
+  }
+}
+
+export async function captureLinkedInSessionFromDirectPersistentProfile(accountId: string, sessionStore: SessionStore) {
+  const { legacyConfig } = await getLinkedInAuthBootstrapState();
+  if (!legacyConfig.userDataDir) {
+    throw new Error(`Direct Chrome profile capture is not configured for account ${accountId}. Set USER_DATA_DIR first.`);
+  }
+
+  const exactProfile = path.resolve(legacyConfig.userDataDir);
+  const normalizedProfile = normalizeChromeProfilePath(legacyConfig.userDataDir);
+  const launchAttempts = [
+    {
+      userDataDir: exactProfile,
+      profileDirectory: undefined
+    },
+    {
+      userDataDir: normalizedProfile.userDataDir,
+      profileDirectory: normalizedProfile.profileDirectory
+    }
+  ].filter(
+    (attempt, index, attempts) =>
+      attempts.findIndex(
+        (candidate) =>
+          candidate.userDataDir === attempt.userDataDir &&
+          candidate.profileDirectory === attempt.profileDirectory
+      ) === index
+  );
+
+  let lastError: unknown = null;
+
+  for (const attempt of launchAttempts) {
+    try {
+      const session = await withLinkedInMessagingDirectPersistentProfile(
+        {
+          proxyUrl: legacyConfig.proxyUrl,
+          userDataDir: attempt.userDataDir,
+          profileDirectory: attempt.profileDirectory,
+          userAgent: getDefaultLinkedInUserAgent()
+        },
+        async (page) => {
+          await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
+          const readyState = await waitForLinkedInMessagingReady(page, 20000);
+
+          debugLog('direct profile capture ready state', readyState);
+
+          if (
+            readyState.href.includes('/login') ||
+            readyState.href.includes('/checkpoint') ||
+            readyState.href.includes('/challenge')
+          ) {
+            throw new Error(
+              `LinkedIn direct profile capture did not reach an authenticated messaging page for account ${accountId}. url=${readyState.href}`
+            );
+          }
+
+          const context = page.context();
+          const cookies = await context.cookies('https://www.linkedin.com');
+          const cookiesJson = JSON.stringify(
+            cookies.map((cookie) => ({
+              name: cookie.name,
+              value: cookie.value,
+              domain: cookie.domain,
+              path: cookie.path,
+              expires: cookie.expires,
+              httpOnly: cookie.httpOnly,
+              secure: cookie.secure,
+              sameSite: cookie.sameSite as BrowserCookie['sameSite']
+            }))
+          );
+
+          debugLog(
+            'direct profile capture cookies',
+            cookies.map((cookie) => ({
+              name: cookie.name,
+              domain: cookie.domain,
+              expires: cookie.expires
+            }))
+          );
+
+          if (!hasUsableLinkedInCookiesJson(cookiesJson)) {
+            throw new Error(
+              `LinkedIn direct profile capture reached ${readyState.href} but did not expose usable LinkedIn cookies for account ${accountId}.`
+            );
+          }
+
+          return {
+            accountId,
+            cookiesJson,
+            userAgent: await page.evaluate(() => navigator.userAgent).catch(() => getDefaultLinkedInUserAgent()),
+            capturedAt: Date.now()
+          } satisfies SessionState;
+        }
+      );
+
+      await sessionStore.save(session);
+      return session;
+    } catch (error) {
+      lastError = error;
+      debugLog('direct persistent-profile launch attempt failed', {
+        userDataDir: attempt.userDataDir,
+        profileDirectory: attempt.profileDirectory,
+        error
+      });
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Direct Chrome profile capture failed for account ${accountId}.`);
+}
+
 async function ensureLegacySession(accountId: string, sessionStore: SessionStore) {
   const existing = await sessionStore.load(accountId);
   if (existing) {
@@ -377,6 +724,10 @@ async function ensureLegacySession(accountId: string, sessionStore: SessionStore
   }
 
   const cookiesJson = await createLegacyImportedCookies(legacyConfig.userDataDir);
+  if (!cookiesJson) {
+    return null;
+  }
+
   const session: SessionState = {
     accountId,
     cookiesJson,
@@ -387,6 +738,22 @@ async function ensureLegacySession(accountId: string, sessionStore: SessionStore
   await sessionStore.save(session);
   return session;
 }
+
+function isLinkedInLoginRedirectError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const message = error.message.toLowerCase();
+  return message.includes('redirected to login') || message.includes('/login') || message.includes('/uas/login');
+}
+
+export const __testables = {
+  isLinkedInLoginRedirectError,
+  setLegacyEnvMask(mask: Iterable<string>) {
+    __authConfigTestables.setLegacyEnvMask(mask);
+  }
+};
 
 export function parseThreadFixture(html: string): ParsedThreadFixture {
   const threadMatch = html.match(/<section[^>]*data-thread-id="([^"]+)"[^>]*data-title="([^"]+)"[^>]*data-participant="([^"]+)"[^>]*data-snippet="([^"]*)"[^>]*data-unread="(\d+)"[^>]*data-last-message-at="(\d+)"/i);
@@ -482,7 +849,7 @@ export class PlaywrightMessagingProvider /*PATCH*/ implements MessagingProvider 
 type PersistentProfileOptions = {
   proxyUrl: string | null;
   userDataDir: string;
-  profileDirectory: string;
+  profileDirectory?: string;
   userAgent: string;
 };
 
@@ -591,18 +958,35 @@ async function withLinkedInMessagingPersistentProfile<T>(
   callback: (page: import('@playwright/test').Page) => Promise<T>
 ) {
   const tempUserDataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mycrm-linkedin-profile-'));
-  const sourceProfileDir = path.join(options.userDataDir, options.profileDirectory);
-  const targetProfileDir = path.join(tempUserDataDir, options.profileDirectory);
+  const resolvedProfile = await resolvePersistentProfileSource(options.userDataDir, options.profileDirectory);
+  await copyDirectorySkippingBusyFiles(resolvedProfile.sourceUserDataDir, tempUserDataDir);
 
-  await copyDirectorySkippingBusyFiles(sourceProfileDir, targetProfileDir);
+  let context: import('@playwright/test').BrowserContext | null = null;
 
-  const context = await chromium.launchPersistentContext(tempUserDataDir, {
-    channel: 'chrome',
-    headless: false,
-    proxy: options.proxyUrl ? { server: options.proxyUrl } : undefined,
-    userAgent: options.userAgent,
-    args: [`--profile-directory=${options.profileDirectory}`]
-  });
+  try {
+    context = await chromium.launchPersistentContext(tempUserDataDir, {
+      channel: 'chrome',
+      headless: false,
+      proxy: options.proxyUrl ? { server: options.proxyUrl } : undefined,
+      userAgent: options.userAgent,
+      viewport: { width: 1280, height: 800 },
+      locale: 'en-US',
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: [
+        '--disable-blink-features=AutomationControlled',
+        '--remote-debugging-port=9222'
+      ].concat(
+        resolvedProfile.launchProfileDirectory
+          ? [`--profile-directory=${resolvedProfile.launchProfileDirectory}`]
+          : []
+      )
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Persistent Chrome profile launch failed for LinkedIn sync. userDataDir=${options.userDataDir} profileDirectory=${options.profileDirectory} resolvedProfileDirectory=${resolvedProfile.launchProfileDirectory ?? ''} tempUserDataDir=${tempUserDataDir} message=${message}`
+    );
+  }
 
   try {
     const existingPage = context.pages()[0];
@@ -614,6 +998,86 @@ async function withLinkedInMessagingPersistentProfile<T>(
   }
 }
 
+async function withLinkedInMessagingDirectPersistentProfile<T>(
+  options: PersistentProfileOptions,
+  callback: (page: import('@playwright/test').Page) => Promise<T>
+) {
+  let context: import('@playwright/test').BrowserContext;
+
+  try {
+    context = await chromium.launchPersistentContext(options.userDataDir, {
+      channel: 'chrome',
+      headless: false,
+      proxy: options.proxyUrl ? { server: options.proxyUrl } : undefined,
+      userAgent: options.userAgent,
+      viewport: { width: 1280, height: 800 },
+      locale: 'en-US',
+      ignoreDefaultArgs: ['--enable-automation'],
+      args: ['--disable-blink-features=AutomationControlled', '--remote-debugging-port=9222'].concat(
+        options.profileDirectory ? [`--profile-directory=${options.profileDirectory}`] : []
+      )
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    
+    // Explicitly handle background Chrome instances which accept the launch request,
+    // open a tab if asked, but exit the spawning process - preventing CDP attachment.
+    if (message.includes('Browser closed') || message.includes('Target closed') || message.includes('Timeout')) {
+      throw new Error(
+        `Direct Chrome profile launch failed. The browser may have opened visually, but automation failed to attach to the DevTools endpoint. ` +
+        `This almost always means an existing background Chrome process is locking the profile. \n` +
+        `Next steps:\n` +
+        `1. Close ALL Chrome windows AND exit Chrome from the Windows system tray.\n` +
+        `2. OR use CHROME_CDP_URL to connect to the already-running instance.\n\n` +
+        `Playwright internal error: ${message}`
+      );
+    }
+
+    if (message.includes('Opening in existing browser session')) {
+      throw new Error(
+        `[CRITICAL] Chrome is already running using this profile. Automation cannot attach to an already-running Chrome window via USER_DATA_DIR.\n\n` +
+        `To fix this, you have two options:\n` +
+        `Option A (Recommended): Close ALL Chrome windows completely (make sure it's not in the system tray), then run the sync again. Automation will open Chrome for you.\n` +
+        `Option B: Keep Chrome open, but you must start it with '--remote-debugging-port=9222' and set CHROME_CDP_URL=http://127.0.0.1:9222 in your .env file.`
+      );
+    }
+
+    throw error;
+  }
+
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    return await callback(page);
+  } finally {
+    await context.close();
+  }
+}
+
+async function withLinkedInMessagingStrictDirectPersistentProfile<T>(
+  options: PersistentProfileOptions,
+  callback: (page: import('@playwright/test').Page) => Promise<T>
+) {
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    channel: 'chrome',
+    headless: false,
+    proxy: options.proxyUrl ? { server: options.proxyUrl } : undefined,
+    userAgent: options.userAgent,
+    viewport: { width: 1280, height: 800 },
+    locale: 'en-US',
+    ignoreDefaultArgs: ['--enable-automation'],
+    args: ['--disable-blink-features=AutomationControlled', '--remote-debugging-port=9222'].concat(
+      options.profileDirectory ? [`--profile-directory=${options.profileDirectory}`] : []
+    )
+  });
+
+  try {
+    const page = context.pages()[0] ?? (await context.newPage());
+    return await callback(page);
+  } finally {
+    await context.close();
+  }
+}
+
 const DEBUG_LINKEDIN = process.env.LINKEDIN_DEBUG === '1';
 
 function debugLog(...args: Array<unknown>) {
@@ -622,9 +1086,65 @@ function debugLog(...args: Array<unknown>) {
   console.log('[linkedIn-debug]', ...args);
 }
 
+async function waitForLinkedInMessagingReady(page: import('@playwright/test').Page, timeoutMs: number) {
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const state = await page
+      .evaluate(() => {
+        const href = window.location.href;
+        const hasMessagingShell = Boolean(
+          document.querySelector(
+            '.msg-conversations-container, .msg-overlay-list-bubble, .msg-thread, .msg-s-message-list, [data-control-name*="conversation"], [data-control-name*="thread"]'
+          )
+        );
+
+        return {
+          href,
+          hasMessagingShell
+        };
+      })
+      .catch(() => ({ href: page.url(), hasMessagingShell: false }));
+
+    if (state.href.includes('/login') || state.href.includes('/uas/login')) {
+      return state;
+    }
+
+    if (state.href.includes('/checkpoint') || state.href.includes('/challenge')) {
+      return state;
+    }
+
+    if (state.href.includes('/messaging') && state.hasMessagingShell) {
+      return state;
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  return {
+    href: page.url(),
+    hasMessagingShell: false
+  };
+}
+
 async function extractLinkedInThreads(page: import('@playwright/test').Page, accountId: string): Promise<ThreadSummary[]> {
   await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => undefined);
+  await waitForLinkedInMessagingReady(page, 20000);
+
+  const conversationList = page
+    .locator(
+      'li.msg-conversations-container__convo-item, li.msg-conversation-listitem, [data-view-name="messages-list-item"], [data-control-name*="conversation"], [data-control-name*="thread"]'
+    )
+    .filter({ has: page.locator('a[href*="/messaging/thread/"]') });
+
+  const visibleCount = await conversationList.count().catch(() => 0);
+  if (visibleCount > 0) {
+    for (let index = 0; index < Math.min(visibleCount, 12); index += 1) {
+      await conversationList.nth(index).scrollIntoViewIfNeeded().catch(() => undefined);
+      await page.waitForTimeout(150);
+    }
+  }
 
   if (DEBUG_LINKEDIN) {
     const info = await page.evaluate(() => {
@@ -642,7 +1162,7 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
   const threads = await page.evaluate(() => {
     const candidates = Array.from(
       document.querySelectorAll<HTMLElement>(
-        '[data-control-name*="conversation"], [data-control-name*="thread"], li.msg-conversation-listitem, li.msg-conversations-container__convo-item'
+        '[data-control-name*="conversation"], [data-control-name*="thread"], [data-view-name="messages-list-item"], li.msg-conversation-listitem, li.msg-conversations-container__convo-item'
       )
     );
 
@@ -673,10 +1193,18 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
       const title =
         element.querySelector<HTMLElement>('.msg-conversation-listitem__participant-names, .msg-conversation-card__participant-names, .t-14.t-black.t-bold')
           ?.innerText?.trim() ??
+        element.querySelector<HTMLElement>('.msg-conversation-card__participant-names, .msg-conversation-listitem__participant-names, .artdeco-entity-lockup__title, .artdeco-entity-lockup__subtitle')
+          ?.innerText?.trim() ??
         element.getAttribute('aria-label')?.trim() ??
         '';
       const snippet =
         element.querySelector<HTMLElement>('.msg-conversation-listitem__message-snippet, .msg-conversation-card__message-snippet, .t-12.t-black--light')
+          ?.innerText?.trim() ??
+        element.querySelector<HTMLElement>('.msg-conversation-card__message-snippet, .artdeco-entity-lockup__caption, .artdeco-entity-lockup__metadata')
+          ?.innerText?.trim() ??
+        '';
+      const timeText =
+        element.querySelector<HTMLElement>('time, .msg-conversation-listitem__time-stamp, .msg-conversation-card__time-stamp')
           ?.innerText?.trim() ??
         '';
       const unreadText =
@@ -690,7 +1218,7 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
         participantName: title || 'Unknown participant',
         snippet,
         unreadCount,
-        lastMessageAt: Date.now()
+        lastMessageAt: timeText ? Date.now() : Date.now()
       });
     }
 
@@ -727,7 +1255,7 @@ async function extractLinkedInMessages(
   timeoutMs: number
 ): Promise<MessageRecord[]> {
   await page.goto(`https://www.linkedin.com/messaging/thread/${threadId}/`, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
+  await waitForLinkedInMessagingReady(page, timeoutMs);
 
   return page.evaluate((currentThreadId) => {
     const nodes = Array.from(
@@ -771,7 +1299,7 @@ async function sendLinkedInMessage(
   timeoutMs: number
 ): Promise<{ sentAt: number }> {
   await page.goto(`https://www.linkedin.com/messaging/thread/${threadId}/`, { waitUntil: 'domcontentloaded' });
-  await page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined);
+  await waitForLinkedInMessagingReady(page, timeoutMs);
 
   if (page.url().includes('/login') || page.url().includes('/uas/login')) {
     throw new Error(
@@ -811,7 +1339,7 @@ async function sendLinkedInMessage(
 
   await Promise.all([
     sendButton.click(),
-    page.waitForLoadState('networkidle', { timeout: timeoutMs }).catch(() => undefined)
+    waitForLinkedInMessagingReady(page, timeoutMs)
   ]);
 
   return { sentAt: Date.now() };
@@ -853,6 +1381,50 @@ export class PersistentProfileMessagingProvider implements MessagingProvider {
   }
 }
 
+export class DirectPersistentProfileMessagingProvider implements MessagingProvider {
+  constructor(private readonly options: PersistentProfileOptions, private readonly accountId: string) {}
+
+  async listThreads(): Promise<ThreadSummary[]> {
+    return withLinkedInMessagingDirectPersistentProfile(this.options, async (page) =>
+      extractLinkedInThreads(page, this.accountId)
+    );
+  }
+
+  async getThreadMessages(threadId: string): Promise<MessageRecord[]> {
+    return withLinkedInMessagingDirectPersistentProfile(this.options, async (page) =>
+      extractLinkedInMessages(page, threadId, 20000)
+    );
+  }
+
+  async sendMessage(threadId: string, message: string): Promise<{ sentAt: number }> {
+    return withLinkedInMessagingDirectPersistentProfile(this.options, async (page) =>
+      sendLinkedInMessage(page, this.accountId, threadId, message, 20000)
+    );
+  }
+}
+
+export class StrictDirectPersistentProfileMessagingProvider implements MessagingProvider {
+  constructor(private readonly options: PersistentProfileOptions, private readonly accountId: string) {}
+
+  async listThreads(): Promise<ThreadSummary[]> {
+    return withLinkedInMessagingStrictDirectPersistentProfile(this.options, async (page) =>
+      extractLinkedInThreads(page, this.accountId)
+    );
+  }
+
+  async getThreadMessages(threadId: string): Promise<MessageRecord[]> {
+    return withLinkedInMessagingStrictDirectPersistentProfile(this.options, async (page) =>
+      extractLinkedInMessages(page, threadId, 20000)
+    );
+  }
+
+  async sendMessage(threadId: string, message: string): Promise<{ sentAt: number }> {
+    return withLinkedInMessagingStrictDirectPersistentProfile(this.options, async (page) =>
+      sendLinkedInMessage(page, this.accountId, threadId, message, 20000)
+    );
+  }
+}
+
 const defaultImportFixture = parseThreadFixture(`
   <section
     data-thread-id="thread-import-001"
@@ -885,7 +1457,7 @@ export async function runFakeImportThreads(payload: unknown) {
   });
 }
 
-export async function createBrowserSyncProvider(payload: unknown, options: BrowserSyncOptions): Promise<MessagingProvider> {
+async function resolveBrowserSyncProvider(payload: unknown, options: BrowserSyncOptions): Promise<BrowserSyncProviderResolution> {
   const parsed = importThreadsPayloadSchema.parse(payload);
 
   if (!options.enableRealBrowserSync) {
@@ -901,14 +1473,26 @@ export async function createBrowserSyncProvider(payload: unknown, options: Brows
     (await ensureLegacySession(parsed.accountId, options.sessionStore));
 
   const legacyConfig = await readLegacyEnvConfig();
+  const cdpUrl = legacyConfig.cdpUrl?.trim() ?? '';
+  const hasReachableCdp = cdpUrl ? await isChromeCdpReachable(cdpUrl) : false;
 
-  if (legacyConfig.cdpUrl) {
-    return new CdpMessagingProvider(legacyConfig.cdpUrl, parsed.accountId);
+  if (hasReachableCdp) {
+    return {
+      provider: new CdpMessagingProvider(cdpUrl, parsed.accountId),
+      providerKind: 'cdp'
+    };
+  }
+
+  if (session && hasUsableLinkedInCookies(session)) {
+    return {
+      provider: new PlaywrightMessagingProvider(session),
+      providerKind: 'saved-session'
+    };
   }
 
   if (legacyConfig.userDataDir) {
     const normalizedProfile = normalizeChromeProfilePath(legacyConfig.userDataDir);
-    return new PersistentProfileMessagingProvider(
+    const strictDirectPersistentProfileProvider = new StrictDirectPersistentProfileMessagingProvider(
       {
         proxyUrl: legacyConfig.proxyUrl,
         userDataDir: normalizedProfile.userDataDir,
@@ -917,15 +1501,109 @@ export async function createBrowserSyncProvider(payload: unknown, options: Brows
       },
       parsed.accountId
     );
+    const directPersistentProfileProvider = new DirectPersistentProfileMessagingProvider(
+      {
+        proxyUrl: legacyConfig.proxyUrl,
+        userDataDir: normalizedProfile.userDataDir,
+        profileDirectory: normalizedProfile.profileDirectory,
+        userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
+      },
+      parsed.accountId
+    );
+    const persistentProfileProvider = new PersistentProfileMessagingProvider(
+      {
+        proxyUrl: legacyConfig.proxyUrl,
+        userDataDir: normalizedProfile.userDataDir,
+        profileDirectory: normalizedProfile.profileDirectory,
+        userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
+      },
+      parsed.accountId
+    );
+
+    const tryCredentialBootstrapFallback = async (error: unknown) => {
+      if (!isLinkedInLoginRedirectError(error)) {
+        return null;
+      }
+
+      const bootstrappedSession = await loginAndSaveSession(parsed.accountId, options.sessionStore!, legacyConfig);
+      if (!bootstrappedSession || !hasUsableLinkedInCookies(bootstrappedSession)) {
+        return null;
+      }
+
+      return {
+        provider: new PlaywrightMessagingProvider(bootstrappedSession),
+        providerKind: 'credential-bootstrap',
+        fallbackReason:
+          `Persistent profile redirected to LinkedIn login for account ${parsed.accountId}. ` +
+          'A fresh saved session was created from configured LinkedIn credentials and selected as fallback.'
+      } satisfies BrowserSyncProviderResolution;
+    };
+
+    try {
+      await strictDirectPersistentProfileProvider.listThreads();
+      return {
+        provider: strictDirectPersistentProfileProvider,
+        providerKind: 'direct-profile',
+        fallbackReason: 'Using direct persistent Chrome profile reuse for LinkedIn sync.'
+      };
+    } catch (error) {
+      const credentialBootstrapFallback = await tryCredentialBootstrapFallback(error);
+      if (credentialBootstrapFallback) {
+        return credentialBootstrapFallback;
+      }
+
+      debugLog('strict direct persistent profile probe failed', error);
+    }
+
+    try {
+      await persistentProfileProvider.listThreads();
+      return {
+        provider: persistentProfileProvider,
+        providerKind: 'persistent-profile'
+      };
+    } catch (error) {
+      const credentialBootstrapFallback = await tryCredentialBootstrapFallback(error);
+      if (credentialBootstrapFallback) {
+        return credentialBootstrapFallback;
+      }
+
+      throw error;
+    }
   }
 
   if (session && hasUsableLinkedInCookies(session)) {
-    return new PlaywrightMessagingProvider(session);
+    return {
+      provider: new PlaywrightMessagingProvider(session),
+      providerKind: 'saved-session'
+    };
   }
 
   throw new Error(
     `No reusable LinkedIn browser session found for account ${parsed.accountId}. Configure CHROME_CDP_URL for an authenticated Chrome session, provide USER_DATA_DIR for a reusable profile, or import a saved LinkedIn cookie session.`
   );
+}
+
+export async function createBrowserSyncProvider(payload: unknown, options: BrowserSyncOptions): Promise<MessagingProvider> {
+  const resolution = await resolveBrowserSyncProvider(payload, options);
+
+  if (resolution.fallbackReason) {
+    debugLog(resolution.fallbackReason);
+  }
+
+  return resolution.provider;
+}
+
+export async function inspectBrowserSyncProvider(payload: unknown, options: BrowserSyncOptions) {
+  const resolution = await resolveBrowserSyncProvider(payload, options);
+
+  return {
+    providerKind: resolution.providerKind,
+    fallbackReason: resolution.fallbackReason ?? null
+  };
+}
+
+export function selectThreadsForImport(threads: ThreadSummary[]) {
+  return threads.slice(0, 10);
 }
 
 export async function runImportThreads(payload: unknown, options: BrowserSyncOptions) {
@@ -935,13 +1613,46 @@ export async function runImportThreads(payload: unknown, options: BrowserSyncOpt
 
   const parsed = importThreadsPayloadSchema.parse(payload);
   const provider = await createBrowserSyncProvider(parsed, options);
-  const threads = await provider.listThreads();
+  const threads = selectThreadsForImport(await provider.listThreads());
+
+  let itemsImported = threads.length;
+  let messagesImported = 0;
+
+  if (options.db && options.sqlite) {
+    const repository = createMutationRepository(options.db, options.sqlite);
+    const hydratedThreads = await Promise.all(
+      threads.map(async (thread) => ({
+        ...thread,
+        messages: await provider.getThreadMessages(thread.id)
+      }))
+    );
+    const persisted = await repository.importLinkedinThreads({
+      accountId: parsed.accountId,
+      threads: hydratedThreads.map((thread) => ({
+        id: thread.id,
+        title: thread.title,
+        participantName: thread.participantName,
+        snippet: thread.snippet,
+        unreadCount: thread.unreadCount,
+        lastMessageAt: thread.lastMessageAt,
+        messages: thread.messages.map((message) => ({
+          id: message.id,
+          direction: message.direction,
+          body: message.body,
+          sentAt: message.sentAt
+        }))
+      }))
+    });
+    itemsImported = persisted.importedThreads;
+    messagesImported = persisted.importedMessages;
+  }
 
   return importThreadsResultSchema.parse({
     provider: parsed.provider,
     accountId: parsed.accountId,
     itemsScanned: threads.length,
-    itemsImported: threads.length,
+    itemsImported,
+    messagesImported,
     threadIds: threads.map((thread) => thread.id)
   });
 }

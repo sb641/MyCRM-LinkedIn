@@ -1,9 +1,9 @@
-import 'server-only';
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { getEnv } from '@mycrm/core';
 import { createNodeDb } from './node-sqlite';
+
+void process.env.NODE_ENV;
 
 type ServerDb = Awaited<ReturnType<typeof createNodeDb>>;
 export type ResolvedServerDb = ServerDb & { resolvedDatabaseUrl: string; resolvedDatabasePath: string };

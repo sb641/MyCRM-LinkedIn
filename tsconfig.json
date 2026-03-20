@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
-  "files": [],
+  "files": ["./server-only.d.ts"],
   "references": [
     { "path": "./apps/web" },
     { "path": "./apps/worker" },

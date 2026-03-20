@@ -11,34 +11,22 @@ import {
   getEnv
 } from '@mycrm/core';
 import { createJobRepository, createSyncRunRepository, getDb } from '@mycrm/db/server';
-import { getBrowserSession } from '@/lib/services/browser-session-service';
+import {
+  getBrowserSession,
+  hasImportedProfileMarker,
+  hasUsableSavedSession
+} from '@/lib/services/browser-session-service';
+import { getLinkedInAuthBootstrapState } from '@mycrm/automation/src/auth-config';
 
-type BrowserCookie = {
-  name?: string;
-  value?: string;
-  domain?: string;
-};
-
-function hasUsableSavedSession(cookiesJson: string | null | undefined) {
-  if (!cookiesJson?.trim()) {
-    return false;
-  }
-
+async function isChromeCdpReachable(cdpUrl: string) {
   try {
-    const parsed = JSON.parse(cookiesJson) as BrowserCookie[];
-    if (!Array.isArray(parsed)) {
-      return false;
-    }
+    const versionUrl = new URL('/json/version', cdpUrl);
+    const response = await fetch(versionUrl, {
+      method: 'GET',
+      cache: 'no-store'
+    });
 
-    return parsed.some(
-      (cookie) =>
-        typeof cookie?.name === 'string' &&
-        cookie.name.length > 0 &&
-        cookie.name !== 'legacy_profile_imported' &&
-        typeof cookie.value === 'string' &&
-        cookie.value.length > 0 &&
-        (typeof cookie.domain !== 'string' || cookie.domain.includes('linkedin.com'))
-    );
+    return response.ok;
   } catch {
     return false;
   }
@@ -162,14 +150,20 @@ export async function getManualBrowserSyncReadiness(accountId: string) {
   const env = getEnv();
   const savedSession = await getBrowserSession(accountId);
   const hasSavedSession = hasUsableSavedSession(savedSession?.cookiesJson);
-  const hasCdpUrl = Boolean(env.CHROME_CDP_URL?.trim());
-  const hasUserDataDir = Boolean(env.USER_DATA_DIR?.trim());
+  const hasImportedProfileSession = hasImportedProfileMarker(savedSession?.cookiesJson);
+  const bootstrapState = await getLinkedInAuthBootstrapState();
+  const hasCdpUrl = bootstrapState.checks.hasCdpUrl || Boolean(env.CHROME_CDP_URL?.trim());
+  const cdpReachable = bootstrapState.checks.cdpReachable || (hasCdpUrl ? await isChromeCdpReachable(env.CHROME_CDP_URL?.trim() ?? '') : false);
+  const hasUserDataDir = bootstrapState.checks.hasUserDataDir || Boolean(env.USER_DATA_DIR?.trim());
+  const hasLinkedinCredentials = bootstrapState.checks.hasLinkedinCredentials;
 
   const checks = {
     enableRealBrowserSync: env.ENABLE_REAL_BROWSER_SYNC,
     hasCdpUrl,
+    cdpReachable,
     hasUserDataDir,
-    hasSavedSession
+    hasSavedSession,
+    hasLinkedinCredentials
   };
 
   if (!env.ENABLE_REAL_BROWSER_SYNC) {
@@ -183,21 +177,76 @@ export async function getManualBrowserSyncReadiness(accountId: string) {
   }
 
   if (hasCdpUrl) {
+    if (!cdpReachable) {
+      if (hasUserDataDir) {
+        return linkedinSyncReadinessSchema.parse({
+          accountId,
+          ready: true,
+          reason: 'profile_configured',
+          message:
+            'CHROME_CDP_URL is unreachable, but a local Chrome user profile is configured. Sync can fall back to the local browser profile.',
+          checks
+        });
+      }
+
+      if (hasSavedSession) {
+        return linkedinSyncReadinessSchema.parse({
+          accountId,
+          ready: true,
+          reason: 'session_available',
+          message:
+            'CHROME_CDP_URL is unreachable, but a saved LinkedIn session is available. Sync can fall back to stored cookies.',
+          checks
+        });
+      }
+
+      if (hasLinkedinCredentials) {
+        return linkedinSyncReadinessSchema.parse({
+          accountId,
+          ready: true,
+          reason: 'credentials_configured',
+          message:
+            'Chrome DevTools is unreachable, but LinkedIn account credentials are configured. Sync can bootstrap a fresh saved session before importing.',
+          checks
+        });
+      }
+
+      return linkedinSyncReadinessSchema.parse({
+        accountId,
+        ready: false,
+        reason: 'cdp_unreachable',
+        message:
+          'CHROME_CDP_URL is configured but Chrome DevTools is unreachable. Start Chrome with remote debugging enabled and verify /json/version responds.',
+        checks
+      });
+    }
+
     return linkedinSyncReadinessSchema.parse({
       accountId,
       ready: true,
       reason: 'cdp_configured',
-      message: 'Chrome CDP is configured. Sync can reuse an authenticated Chrome session.',
+      message: 'Chrome CDP is configured and reachable. Sync can reuse an authenticated Chrome session.',
       checks
     });
   }
 
-  if (hasUserDataDir) {
+  if (hasUserDataDir && (hasSavedSession || hasLinkedinCredentials || !hasImportedProfileSession)) {
     return linkedinSyncReadinessSchema.parse({
       accountId,
       ready: true,
       reason: 'profile_configured',
       message: 'Chrome user profile is configured. Sync can reuse a local browser profile.',
+      checks
+    });
+  }
+
+  if (hasUserDataDir && hasImportedProfileSession) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: false,
+      reason: 'browser_session_missing',
+      message:
+        'Chrome user profile is configured, but the saved browser session only contains an imported profile marker and LinkedIn still requires login. Open an authenticated LinkedIn session in that profile, connect Chrome DevTools, or configure LinkedIn credentials for bootstrap.',
       checks
     });
   }
@@ -208,6 +257,16 @@ export async function getManualBrowserSyncReadiness(accountId: string) {
       ready: true,
       reason: 'session_available',
       message: 'Saved LinkedIn session found. Sync can authenticate with stored cookies.',
+      checks
+    });
+  }
+
+  if (hasLinkedinCredentials) {
+    return linkedinSyncReadinessSchema.parse({
+      accountId,
+      ready: true,
+      reason: 'credentials_configured',
+      message: 'LinkedIn account credentials are configured. Sync can sign in and save a reusable browser session.',
       checks
     });
   }
@@ -237,7 +296,12 @@ async function assertManualBrowserSyncReady(input: { accountId: string; provider
     });
   }
 
-  if (!readiness.checks.hasCdpUrl && !readiness.checks.hasUserDataDir && !readiness.checks.hasSavedSession) {
+  if (
+    !readiness.checks.hasCdpUrl &&
+    !readiness.checks.hasUserDataDir &&
+    !readiness.checks.hasSavedSession &&
+    !readiness.checks.hasLinkedinCredentials
+  ) {
     throw new AppError('LinkedIn browser sync is not ready.', {
       code: 'MANUAL_SYNC_NOT_READY',
       status: 400,

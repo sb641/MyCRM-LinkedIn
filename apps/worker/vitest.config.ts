@@ -17,6 +17,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      'server-only': path.resolve(__dirname, '../../packages/test-fixtures/src/empty-module.ts'),
       '@mycrm/core': path.resolve(__dirname, '../../packages/core/src/index.ts'),
       '@mycrm/db': path.resolve(__dirname, '../../packages/db/src/index.ts'),
       '@mycrm/automation': path.resolve(__dirname, '../../packages/automation/src/index.ts'),

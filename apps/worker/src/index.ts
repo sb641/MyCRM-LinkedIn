@@ -1,20 +1,39 @@
 import { createLogger, getFeatureFlags } from '@mycrm/core';
 import { createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
-import { createNodeDb as createDb } from '../../../packages/db/src/server/node-sqlite';
-import { createFileSessionStore, runImportThreads, sendBrowserMessage } from '@mycrm/automation';
+import { getDb } from '../../../packages/db/src/server/get-db';
+import { runImportThreads, sendBrowserMessage } from '@mycrm/automation';
+import { createFileSessionStore } from '../../../packages/automation/src/session-store';
 
 const logger = createLogger('worker');
 const WORKER_POLL_INTERVAL_MS = 1500;
+let hasLoggedResolvedDatabase = false;
+
+async function openWorkerDb(databaseUrl?: string) {
+  const { db, sqlite, resolvedDatabasePath, resolvedDatabaseUrl } = await getDb(databaseUrl);
+
+  if (!hasLoggedResolvedDatabase) {
+    logger.info(
+      {
+        resolvedDatabasePath,
+        resolvedDatabaseUrl: resolvedDatabaseUrl.startsWith('file:') ? resolvedDatabaseUrl : '[non-file-database-url]'
+      },
+      'worker resolved database'
+    );
+    hasLoggedResolvedDatabase = true;
+  }
+
+  return {
+    db,
+    sqlite,
+    resolvedDatabasePath,
+    resolvedDatabaseUrl
+  };
+}
 
 async function markSentDraft(databaseUrl: string | undefined, draftId: string, sentAt: number) {
-  const { db: mutationDb, sqlite: mutationSqlite } = await createDb(databaseUrl);
-
-  try {
-    const repository = createMutationRepository(mutationDb, mutationSqlite);
-    return await repository.markDraftSent(draftId, sentAt);
-  } finally {
-    await mutationSqlite.close();
-  }
+  const { db: mutationDb, sqlite: mutationSqlite } = await openWorkerDb(databaseUrl);
+  const repository = createMutationRepository(mutationDb, mutationSqlite);
+  return await repository.markDraftSent(draftId, sentAt);
 }
 
 async function countUnsuppressedImportedThreads(
@@ -28,48 +47,43 @@ async function countUnsuppressedImportedThreads(
     };
   }
 
-  const { db: mutationDb, sqlite: mutationSqlite } = await createDb(databaseUrl);
+  const { db: mutationDb, sqlite: mutationSqlite } = await openWorkerDb(databaseUrl);
+  const repository = createMutationRepository(mutationDb, mutationSqlite);
+  let importedCount = 0;
+  let matchedConversationCount = 0;
 
-  try {
-    const repository = createMutationRepository(mutationDb, mutationSqlite);
-    let importedCount = 0;
-    let matchedConversationCount = 0;
+  for (const threadId of threadIds) {
+    const [contact] = await mutationSqlite.all<{ linkedin_profile_id: string | null }>(
+      `
+        SELECT c.linkedin_profile_id
+        FROM conversations conv
+        INNER JOIN contacts c ON c.id = conv.contact_id
+        WHERE conv.linkedin_thread_id = '${threadId.replace(/'/g, "''")}'
+        LIMIT 1
+      `
+    );
 
-    for (const threadId of threadIds) {
-      const [contact] = await mutationSqlite.all<{ linkedin_profile_id: string | null }>(
-        `
-          SELECT c.linkedin_profile_id
-          FROM conversations conv
-          INNER JOIN contacts c ON c.id = conv.contact_id
-          WHERE conv.linkedin_thread_id = '${threadId.replace(/'/g, "''")}'
-          LIMIT 1
-        `
-      );
-
-      if (!contact) {
-        continue;
-      }
-
-      matchedConversationCount += 1;
-
-      if (!contact?.linkedin_profile_id) {
-        importedCount += 1;
-        continue;
-      }
-
-      const suppressed = await repository.isLinkedinProfileSuppressed(contact.linkedin_profile_id);
-      if (!suppressed) {
-        importedCount += 1;
-      }
+    if (!contact) {
+      continue;
     }
 
-    return {
-      importedCount,
-      matchedConversationCount
-    };
-  } finally {
-    await mutationSqlite.close();
+    matchedConversationCount += 1;
+
+    if (!contact?.linkedin_profile_id) {
+      importedCount += 1;
+      continue;
+    }
+
+    const suppressed = await repository.isLinkedinProfileSuppressed(contact.linkedin_profile_id);
+    if (!suppressed) {
+      importedCount += 1;
+    }
   }
+
+  return {
+    importedCount,
+    matchedConversationCount
+  };
 }
 
 export const __testables = {
@@ -79,7 +93,7 @@ export const __testables = {
 
 export async function runWorkerCycle(databaseUrl?: string) {
   const resolvedDatabaseUrl = databaseUrl;
-  const { db, sqlite } = await createDb(resolvedDatabaseUrl);
+  const { db, sqlite } = await openWorkerDb(resolvedDatabaseUrl);
 
   try {
     const repository = createJobRepository(db, sqlite);
@@ -93,8 +107,7 @@ export async function runWorkerCycle(databaseUrl?: string) {
       {
         jobId: job.id,
         type: job.type,
-        attemptCount: job.attemptCount,
-        scheduledFor: job.scheduledFor
+        attemptCount: job.attemptCount
       },
       'worker claimed job'
     );
@@ -123,7 +136,9 @@ export async function runWorkerCycle(databaseUrl?: string) {
         try {
           const result = await runImportThreads(payload, {
             enableRealBrowserSync: flags.ENABLE_REAL_BROWSER_SYNC,
-            sessionStore: createFileSessionStore()
+            sessionStore: createFileSessionStore(),
+            db,
+            sqlite
           });
           const suppressionAwareCounts = await countUnsuppressedImportedThreads(
             resolvedDatabaseUrl,
@@ -144,7 +159,8 @@ export async function runWorkerCycle(databaseUrl?: string) {
               jobId: job.id,
               syncRunId,
               itemsScanned: result.itemsScanned,
-              itemsImported
+              itemsImported,
+              messagesImported: 'messagesImported' in result ? result.messagesImported ?? 0 : 0
             },
             'worker finished import sync run'
           );
@@ -168,18 +184,14 @@ export async function runWorkerCycle(databaseUrl?: string) {
         const draftId = typeof payload.draftId === 'string' ? payload.draftId : null;
 
         if (draftId) {
-          const { db: mutationDb, sqlite: mutationSqlite } = await createDb(resolvedDatabaseUrl);
-          try {
-            const mutationRepository = createMutationRepository(mutationDb, mutationSqlite);
-            const draft = await mutationRepository.findDraftForSend(draftId);
+          const { db: mutationDb, sqlite: mutationSqlite } = await openWorkerDb(resolvedDatabaseUrl);
+          const mutationRepository = createMutationRepository(mutationDb, mutationSqlite);
+          const draft = await mutationRepository.findDraftForSend(draftId);
 
-            if (draft?.sendStatus === 'sent') {
-              await mutationRepository.markDraftSent(draftId, draft.sentAt ?? Date.now());
-              await repository.markJobSucceeded(job.id);
-              return { status: 'processed' as const, processedJobId: job.id };
-            }
-          } finally {
-            await mutationSqlite.close();
+          if (draft?.sendStatus === 'sent') {
+            await mutationRepository.markDraftSent(draftId, draft.sentAt ?? Date.now());
+            await repository.markJobSucceeded(job.id);
+            return { status: 'processed' as const, processedJobId: job.id };
           }
         }
 
@@ -205,18 +217,14 @@ export async function runWorkerCycle(databaseUrl?: string) {
             throw new Error(`Sent draft could not be updated: ${result.draftId}`);
           }
         } catch (error) {
-          const { db: mutationDb, sqlite: mutationSqlite } = await createDb(resolvedDatabaseUrl);
-          try {
-            const repository = createMutationRepository(mutationDb, mutationSqlite);
-            if (draftId) {
-              const draft = await repository.findDraftForSend(draftId);
+          const { db: mutationDb, sqlite: mutationSqlite } = await openWorkerDb(resolvedDatabaseUrl);
+          const repository = createMutationRepository(mutationDb, mutationSqlite);
+          if (draftId) {
+            const draft = await repository.findDraftForSend(draftId);
 
-              if (draft?.sendStatus !== 'sent') {
-                await repository.markDraftSendFailed(draftId);
-              }
+            if (draft?.sendStatus !== 'sent') {
+              await repository.markDraftSendFailed(draftId);
             }
-          } finally {
-            await mutationSqlite.close();
           }
 
           throw error;
@@ -238,7 +246,6 @@ export async function runWorkerCycle(databaseUrl?: string) {
       };
     }
   } finally {
-    await sqlite.close();
   }
 }
 
@@ -265,6 +272,18 @@ export function startWorker() {
       isRunningCycle = false;
     }
   };
+
+  void openWorkerDb().then(
+    () => {
+      return;
+    },
+    (error) => {
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        'worker failed to resolve database on boot'
+      );
+    }
+  );
 
   logger.info({ flags }, 'worker booted');
   void runNextCycle();

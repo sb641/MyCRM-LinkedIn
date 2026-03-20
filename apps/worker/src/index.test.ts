@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import { __testables, startWorker } from './index';
 import { createJobRepository, createMutationRepository, createSyncRunRepository } from '@mycrm/db';
 import { createNodeDb as createDb } from '../../../packages/db/src/server/node-sqlite';
+import { getDb } from '../../../packages/db/src/server/get-db';
 import { runMigrations } from '../../../packages/db/src/migrate';
 import { runWorkerCycle } from './index';
 import { buildSeedData } from '../../../packages/db/src/seed-data';
@@ -43,6 +44,20 @@ async function setupSeededDb(databaseUrl: string) {
 }
 
 describe('worker bootstrap', () => {
+  it('resolves relative database paths from the workspace root', async () => {
+    const relativeDatabasePath = `.tmp/worker-relative-${Date.now()}-${Math.random().toString(16).slice(2)}.db`;
+    const expectedPath = path.resolve(workspaceRoot, relativeDatabasePath);
+    const connection = await getDb(relativeDatabasePath);
+
+    try {
+      expect(connection.resolvedDatabasePath).toBe(expectedPath);
+      expect(connection.resolvedDatabaseUrl).toBe(expectedPath);
+    } finally {
+      await connection.sqlite.close();
+      await fs.rm(expectedPath, { force: true });
+    }
+  });
+
   it('starts in idle mode', () => {
     expect(startWorker()).toMatchObject({ status: 'idle' });
   });

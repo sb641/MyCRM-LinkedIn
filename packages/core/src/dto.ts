@@ -411,18 +411,33 @@ export const linkedinSyncReadinessSchema = z.object({
   reason: z.enum([
     'ready',
     'feature_disabled',
+    'cdp_unreachable',
     'cdp_configured',
     'profile_configured',
     'session_available',
+    'credentials_configured',
     'browser_session_missing'
   ]),
   message: z.string().min(1),
   checks: z.object({
     enableRealBrowserSync: z.boolean(),
     hasCdpUrl: z.boolean(),
+    cdpReachable: z.boolean(),
     hasUserDataDir: z.boolean(),
-    hasSavedSession: z.boolean()
+    hasSavedSession: z.boolean(),
+    hasLinkedinCredentials: z.boolean()
   })
+});
+
+export const browserSessionBootstrapRequestSchema = z.object({
+  accountId: z.string().min(1).default('local-account')
+});
+
+export const browserSessionBootstrapResultSchema = z.object({
+  accountId: z.string().min(1),
+  capturedAt: z.number().int().positive(),
+  userAgent: z.string().min(1),
+  readiness: linkedinSyncReadinessSchema
 });
 
 export const settingKeySchema = z.enum([
@@ -555,6 +570,7 @@ export const importThreadsResultSchema = z.object({
   accountId: z.string().min(1),
   itemsScanned: z.number().int().nonnegative(),
   itemsImported: z.number().int().nonnegative(),
+  messagesImported: z.number().int().nonnegative().optional(),
   threadIds: z.array(z.string().min(1))
 });
 

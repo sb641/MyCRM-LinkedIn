@@ -1441,6 +1441,186 @@ export function createContactRepository(_db: RepositoryDbClient, sqlite: Reposit
 
 export function createMutationRepository(db: RepositoryDbClient, sqlite: RepositorySqliteConnection) {
   return {
+    async importLinkedinThreads(args: {
+      accountId: string;
+      threads: Array<{
+        id: string;
+        title: string;
+        participantName: string;
+        snippet: string;
+        unreadCount: number;
+        lastMessageAt: number;
+        messages: Array<{
+          id: string;
+          direction: 'inbound' | 'outbound';
+          body: string;
+          sentAt: number;
+        }>;
+      }>;
+    }) {
+      const now = Date.now();
+      let importedThreads = 0;
+      let importedMessages = 0;
+
+      for (const thread of args.threads) {
+        const safeThreadId = thread.id.replace(/'/g, "''");
+        const safeAccountId = args.accountId.replace(/'/g, "''");
+        const safeParticipantName = thread.participantName.trim().replace(/'/g, "''");
+        const safeTitle = thread.title.trim().replace(/'/g, "''");
+        const safeSnippet = thread.snippet.trim().replace(/'/g, "''");
+        const profileSlug = thread.id.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        const linkedinProfileId = `linkedin-${profileSlug || 'contact'}`;
+        const safeLinkedinProfileId = linkedinProfileId.replace(/'/g, "''");
+
+        const existingConversation = await sqlite.all<{ id: string; contactId: string }>(`
+          SELECT id, contact_id AS contactId
+          FROM conversations
+          WHERE linkedin_thread_id = '${safeThreadId}'
+          LIMIT 1
+        `);
+
+        let contactId = existingConversation[0]?.contactId;
+        let conversationId = existingConversation[0]?.id;
+
+        if (!contactId) {
+          const existingContact = await sqlite.all<{ id: string }>(`
+            SELECT id
+            FROM contacts
+            WHERE linkedin_profile_id = '${safeLinkedinProfileId}'
+            LIMIT 1
+          `);
+          contactId = existingContact[0]?.id ?? `contact-import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        }
+
+        if (!conversationId) {
+          conversationId = `conversation-import-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+        }
+
+        await sqlite.exec(`
+          INSERT INTO contacts (
+            id,
+            name,
+            company,
+            position,
+            headline,
+            profile_url,
+            linkedin_profile_id,
+            account_id,
+            outreach_status,
+            next_reminder_at,
+            seniority_bucket,
+            buying_role,
+            relationship_status,
+            last_interaction_at,
+            last_reply_at,
+            last_sent_at,
+            created_at,
+            updated_at,
+            deleted_at
+          ) VALUES (
+            '${contactId.replace(/'/g, "''")}',
+            '${safeParticipantName || safeTitle || 'LinkedIn Contact'}',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            '${safeLinkedinProfileId}',
+            '${safeAccountId}',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            'active',
+            ${thread.lastMessageAt},
+            ${thread.messages.some((message) => message.direction === 'inbound') ? Math.max(...thread.messages.filter((message) => message.direction === 'inbound').map((message) => message.sentAt)) : 'NULL'},
+            ${thread.messages.some((message) => message.direction === 'outbound') ? Math.max(...thread.messages.filter((message) => message.direction === 'outbound').map((message) => message.sentAt)) : 'NULL'},
+            ${now},
+            ${now},
+            NULL
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            linkedin_profile_id = excluded.linkedin_profile_id,
+            account_id = excluded.account_id,
+            last_interaction_at = excluded.last_interaction_at,
+            last_reply_at = excluded.last_reply_at,
+            last_sent_at = excluded.last_sent_at,
+            updated_at = excluded.updated_at,
+            deleted_at = NULL
+        `);
+
+        await sqlite.exec(`
+          INSERT INTO conversations (
+            id,
+            contact_id,
+            linkedin_thread_id,
+            last_message_date,
+            last_sender,
+            last_synced_at,
+            created_at,
+            deleted_at
+          ) VALUES (
+            '${conversationId.replace(/'/g, "''")}',
+            '${contactId.replace(/'/g, "''")}',
+            '${safeThreadId}',
+            ${thread.lastMessageAt},
+            ${thread.messages[thread.messages.length - 1]?.direction === 'inbound' ? `'contact'` : `'me'`},
+            ${now},
+            ${now},
+            NULL
+          )
+          ON CONFLICT(id) DO UPDATE SET
+            contact_id = excluded.contact_id,
+            linkedin_thread_id = excluded.linkedin_thread_id,
+            last_message_date = excluded.last_message_date,
+            last_sender = excluded.last_sender,
+            last_synced_at = excluded.last_synced_at,
+            deleted_at = NULL
+        `);
+
+        importedThreads += 1;
+
+        for (const message of thread.messages) {
+          const safeMessageId = message.id.replace(/'/g, "''");
+          const safeBody = message.body.replace(/'/g, "''");
+          await sqlite.exec(`
+            INSERT INTO messages (
+              id,
+              conversation_id,
+              linkedin_message_id,
+              sender,
+              sender_type,
+              content,
+              timestamp,
+              is_inbound
+            ) VALUES (
+              'message-import-${safeMessageId}',
+              '${conversationId.replace(/'/g, "''")}',
+              '${safeMessageId}',
+              ${message.direction === 'inbound' ? `'${safeParticipantName || safeTitle || 'Contact'}'` : `'Me'`},
+              ${message.direction === 'inbound' ? `'contact'` : `'account'`},
+              '${safeBody}',
+              ${message.sentAt},
+              ${message.direction === 'inbound' ? 1 : 0}
+            )
+            ON CONFLICT(linkedin_message_id) DO UPDATE SET
+              conversation_id = excluded.conversation_id,
+              sender = excluded.sender,
+              sender_type = excluded.sender_type,
+              content = excluded.content,
+              timestamp = excluded.timestamp,
+              is_inbound = excluded.is_inbound
+          `);
+          importedMessages += 1;
+        }
+      }
+
+      return {
+        importedThreads,
+        importedMessages
+      };
+    },
+
     async updateRelationshipStatus(contactId: string, relationshipStatus: RelationshipStatus) {
       const safeContactId = contactId.replace(/'/g, "''");
       const safeStatus = relationshipStatus.replace(/'/g, "''");

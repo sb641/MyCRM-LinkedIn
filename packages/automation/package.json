@@ -12,6 +12,7 @@
     "test:integration": "vitest run"
   },
   "dependencies": {
-    "@mycrm/test-fixtures": "workspace:*"
+    "@mycrm/test-fixtures": "workspace:*",
+    "playwright": "^1.58.2"
   }
 }

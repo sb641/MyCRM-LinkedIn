@@ -99,6 +99,16 @@ The project is a local-first LinkedIn conversation CRM MVP built as a TypeScript
 - The same presentation layer now normalizes raw sync failures into stable operator guidance, which keeps retry instructions consistent even if worker error strings vary.
 - This keeps manual operator intent explicit while the actual browser execution remains guarded behind the feature flag and session requirements.
 
+### Dual-path browser execution
+
+- The current automation layer now preserves two real LinkedIn sync strategies.
+- Strategy 1: CDP reuse. Playwright connects to an already-open Chrome instance via `CHROME_CDP_URL` and reuses the live authenticated browser session.
+- Strategy 2: direct persistent-profile reuse. Playwright launches Chrome directly against `USER_DATA_DIR` with `launchPersistentContext(...)`, mirroring the old Python terminal implementation.
+- If direct persistent-profile reuse fails because the profile redirects to LinkedIn login, the existing copied-profile and saved-session fallbacks remain available.
+- **Profile Selection Heuristic**: To handle machines with multiple Chrome profiles, the automation layer now reads `Local State` and scores profiles based on `user_name`, `gaia_name`, and `is_using_default_name` to automatically select the most likely authenticated LinkedIn profile (e.g., preferring "Profile 1" or "Default" based on activity and identity markers).
+- **Cloning Optimizations**: When cloning a profile for CDP-assisted sync, the system now automatically excludes massive temporary directories (e.g., `Cache`, `Service Worker`, `Crashpad`, `Sessions`) to prevent `ENOSPC` errors and improve startup performance.
+- This keeps the newer architecture intact while restoring the older terminal behavior as a second production path.
+
 ## Guardrails
 
 - AI and automation are behind feature flags.

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
+import { startTransition } from 'react';
 import type { FeatureFlags } from '@mycrm/core';
 import type { ShellDataState } from '@/lib/crm-shell';
 import { BulkDraftModal, type BulkDraftSelection } from '@/components/crm/modals/bulk-draft-modal';
@@ -26,6 +27,39 @@ type SyncDiagnosticsSnapshot = {
   activeJobStatus: string | null;
   latestRunStatus: string | null;
 };
+
+type SyncRunStatus = 'running' | 'succeeded' | 'failed';
+
+type BrowserSyncReadiness = {
+  accountId: string;
+  ready: boolean;
+  reason:
+    | 'ready'
+    | 'feature_disabled'
+    | 'cdp_unreachable'
+    | 'cdp_configured'
+    | 'profile_configured'
+    | 'session_available'
+    | 'credentials_configured'
+    | 'browser_session_missing';
+  message: string;
+  checks: {
+    enableRealBrowserSync: boolean;
+    hasCdpUrl: boolean;
+    cdpReachable: boolean;
+    hasUserDataDir: boolean;
+    hasSavedSession: boolean;
+    hasLinkedinCredentials: boolean;
+  };
+};
+
+function normalizeSyncRunStatus(status: string | null): SyncRunStatus | null {
+  if (status === 'running' || status === 'succeeded' || status === 'failed') {
+    return status;
+  }
+
+  return null;
+}
 
 function formatDuration(ms: number) {
   if (ms < 1000) {
@@ -52,6 +86,31 @@ function formatSyncPhaseLabel(phase: SyncDiagnosticsSnapshot['phase']) {
     default:
       return 'Idle';
   }
+}
+
+function formatManualSyncErrorMessage(message: string) {
+  const normalizedMessage = message.toLowerCase();
+  if (normalizedMessage.includes('econnrefused') && normalizedMessage.includes('127.0.0.1:9222')) {
+    return 'Chrome DevTools is unreachable at 127.0.0.1:9222. Start Chrome with remote debugging enabled or update CHROME_CDP_URL.';
+  }
+
+  if (normalizedMessage.includes('cdp_unreachable')) {
+    return 'Chrome DevTools is unreachable. Start Chrome with remote debugging enabled and verify CHROME_CDP_URL responds at /json/version.';
+  }
+
+  return message;
+}
+
+function canQueueManualSync(readiness: BrowserSyncReadiness | null) {
+  if (!readiness) {
+    return true;
+  }
+
+  if (readiness.ready) {
+    return true;
+  }
+
+  return readiness.reason !== 'browser_session_missing';
 }
 
 type InboxWorkspaceProps = {
@@ -95,6 +154,8 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncAccountId, setSyncAccountId] = useState(defaultAccountId);
   const [syncDiagnostics, setSyncDiagnostics] = useState<SyncDiagnosticsSnapshot | null>(null);
+  const [syncReadiness, setSyncReadiness] = useState<BrowserSyncReadiness | null>(null);
+  const [isBootstrappingSession, setIsBootstrappingSession] = useState(false);
   const [isQueueingSend, setIsQueueingSend] = useState<string | null>(null);
   const [sendMessage, setSendMessage] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -183,12 +244,26 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
         const jobs = Array.isArray(body.jobs) ? body.jobs : [];
         const syncRuns = Array.isArray(body.syncRuns) ? body.syncRuns : [];
         const matchingJob = jobs.find((entry: { job?: { id?: string; status?: string; lastError?: string | null } }) => entry?.job?.id === syncDiagnostics.jobId);
-        const matchingRun = syncRuns.find(
-          (entry: { provider?: string; status?: string; startedAt?: number; error?: string | null }) =>
-            entry?.provider === 'linkedin-browser' &&
-            typeof entry?.startedAt === 'number' &&
-            entry.startedAt >= syncDiagnostics.startedAt - 5_000
-        );
+        const matchingRun = syncRuns
+          .filter(
+            (entry: {
+              accountId?: string;
+              provider?: string;
+              status?: string;
+              startedAt?: number;
+              error?: string | null;
+            }) =>
+              entry?.provider === 'linkedin-browser' &&
+              entry?.accountId === syncDiagnostics.accountId &&
+              typeof entry?.startedAt === 'number' &&
+              entry.startedAt >= syncDiagnostics.startedAt - 5_000
+          )
+          .sort(
+            (
+              left: { startedAt?: number },
+              right: { startedAt?: number }
+            ) => (right.startedAt ?? 0) - (left.startedAt ?? 0)
+          )[0];
 
         setSyncDiagnostics((current) => {
           if (!current || current.jobId !== syncDiagnostics.jobId) {
@@ -197,7 +272,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
           const now = Date.now();
           const jobStatus = matchingJob?.job?.status ?? null;
-          const runStatus = matchingRun?.status ?? null;
+          const runStatus = normalizeSyncRunStatus(matchingRun?.status ?? null);
           const queuedTooLong =
             (jobStatus === 'queued' || jobStatus === null) && now - current.startedAt > 15_000;
 
@@ -209,10 +284,10 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
             phase = 'failed';
             lastError = matchingRun?.error ?? matchingJob?.job?.lastError ?? current.lastError;
             lastMessage = lastError ? `Sync failed: ${lastError}` : 'Sync failed';
-          } else if (runStatus === 'completed' || jobStatus === 'succeeded') {
+          } else if (jobStatus === 'succeeded' || runStatus === 'succeeded') {
             phase = 'completed';
-            lastMessage = 'Sync completed. Refresh inbox data to see imported conversations.';
-          } else if (runStatus === 'running' || jobStatus === 'running') {
+            lastMessage = 'Sync completed. Reloading inbox data...';
+          } else if (jobStatus === 'running' || runStatus === 'running') {
             phase = 'running';
             lastMessage = 'Worker picked up the job and is syncing conversations.';
           } else if (queuedTooLong) {
@@ -265,6 +340,26 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       window.clearInterval(intervalId);
     };
   }, [syncDiagnostics?.jobId, syncDiagnostics?.phase, syncDiagnostics?.startedAt]);
+
+  useEffect(() => {
+    if (syncDiagnostics?.phase !== 'completed') {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      startTransition(() => {
+        refreshWorkspace({
+          nextAccountId: selectedAccountId,
+          nextContactId: workspace.selectedItem?.contactId ?? state.selectedItem?.contactId ?? null,
+          nextConversationId: workspace.selectedItem?.conversationId ?? state.selectedItem?.conversationId ?? null
+        });
+      });
+    }, 300);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [selectedAccountId, state.selectedItem?.contactId, state.selectedItem?.conversationId, syncDiagnostics?.phase, workspace.selectedItem?.contactId, workspace.selectedItem?.conversationId]);
 
   function refreshWorkspace(options?: {
     nextAccountId?: string | null;
@@ -361,6 +456,25 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
   async function handleManualSync() {
     const accountId = syncAccountId.trim() || defaultAccountId;
+    if (!canQueueManualSync(syncReadiness)) {
+      const message = syncReadiness?.message ?? 'LinkedIn browser session is not ready for sync.';
+      setSyncMessage(null);
+      setSyncError(message);
+      setSyncDiagnostics((current) => ({
+        jobId: current?.jobId ?? null,
+        accountId,
+        phase: 'failed',
+        startedAt: current?.startedAt ?? Date.now(),
+        updatedAt: Date.now(),
+        lastMessage: `Sync request blocked: ${message}`,
+        lastError: message,
+        pollCount: current?.pollCount ?? 0,
+        activeJobStatus: current?.activeJobStatus ?? null,
+        latestRunStatus: current?.latestRunStatus ?? null
+      }));
+      return;
+    }
+
     setSyncMessage(null);
     setSyncError(null);
     setIsSyncing(true);
@@ -388,6 +502,23 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       const body = await response.json();
       if (!response.ok) {
         const checks = body?.details?.checks;
+        const readiness = body?.details
+          ? {
+              accountId,
+              ready: false,
+              reason: body.details.reason ?? 'browser_session_missing',
+              message: body.message ?? body.error?.message ?? 'Unable to queue sync',
+              checks: {
+                enableRealBrowserSync: Boolean(checks?.enableRealBrowserSync),
+                hasCdpUrl: Boolean(checks?.hasCdpUrl),
+                cdpReachable: Boolean(checks?.cdpReachable),
+                hasUserDataDir: Boolean(checks?.hasUserDataDir),
+                hasSavedSession: Boolean(checks?.hasSavedSession),
+                hasLinkedinCredentials: Boolean(checks?.hasLinkedinCredentials)
+              }
+            }
+          : null;
+        setSyncReadiness(readiness);
         const checksSummary = checks
           ? Object.entries(checks)
               .map(([key, value]) => `${key}=${String(value)}`)
@@ -399,7 +530,8 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
         throw new Error(message);
       }
 
-      const jobId = body.jobId ?? body.job?.id ?? null;
+        const jobId = body.jobId ?? body.job?.id ?? null;
+        setSyncReadiness(null);
       setSyncMessage(`Sync queued for ${jobId ?? 'queued job'}`);
       setSyncDiagnostics((current) => ({
         jobId,
@@ -414,7 +546,9 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
         latestRunStatus: null
       }));
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unable to queue sync';
+      const message = formatManualSyncErrorMessage(
+        error instanceof Error ? error.message : 'Unable to queue sync'
+      );
       setSyncError(message);
       setSyncDiagnostics((current) => ({
         jobId: current?.jobId ?? null,
@@ -430,6 +564,35 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
       }));
     } finally {
       setIsSyncing(false);
+    }
+  }
+
+  async function handleBootstrapBrowserSession() {
+    const accountId = syncAccountId.trim() || defaultAccountId;
+    setSyncMessage(null);
+    setSyncError(null);
+    setIsBootstrappingSession(true);
+
+    try {
+      const response = await fetch('/api/browser-session?mode=bootstrap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ accountId })
+      });
+      const body = await response.json();
+
+      if (!response.ok) {
+        throw new Error(body.message ?? body.error?.message ?? 'Unable to sign in to LinkedIn');
+      }
+
+      setSyncReadiness(body.readiness ?? null);
+      setSyncMessage(`LinkedIn session saved for ${body.accountId}. You can start sync now.`);
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : 'Unable to sign in to LinkedIn');
+    } finally {
+      setIsBootstrappingSession(false);
     }
   }
 
@@ -1071,9 +1234,32 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                 <span>Account ID</span>
                 <input value={syncAccountId} onChange={(event) => setSyncAccountId(event.target.value)} />
               </label>
-              <SyncConversationsButton className="accent-button rail-action" isSyncing={isSyncing} onClick={handleManualSync} />
+              <SyncConversationsButton
+                className="accent-button rail-action"
+                isSyncing={isSyncing || !canQueueManualSync(syncReadiness)}
+                onClick={handleManualSync}
+              />
+              <button
+                className="ghost-button rail-action"
+                type="button"
+                onClick={handleBootstrapBrowserSession}
+                disabled={isBootstrappingSession}
+              >
+                {isBootstrappingSession ? 'Signing in to LinkedIn...' : 'Login and save session'}
+              </button>
               {syncMessage ? <p className="generated-draft-preview">{syncMessage}</p> : null}
               {syncError ? <p className="generated-draft-error">{syncError}</p> : null}
+              {syncReadiness ? (
+                <div className="generated-draft-preview" data-testid="sync-readiness">
+                  <strong>LinkedIn readiness</strong>
+                  <p>{syncReadiness.message}</p>
+                  <pre className="generated-draft-preview">
+                    {Object.entries(syncReadiness.checks)
+                      .map(([key, value]) => `${key}=${String(value)}`)
+                      .join('\n')}
+                  </pre>
+                </div>
+              ) : null}
               {syncDiagnostics ? (
                 <div className="generated-draft-preview" data-testid="sync-diagnostics">
                   <strong>{syncPhaseLabel}</strong>
@@ -1650,6 +1836,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
                 </div>
                 <div className="sync-session-summary" aria-label="Saved browser session">
                   <p>{state.browserSession.statusLabel}</p>
+                  <p className="stack-copy">{state.browserSession.detailLabel}</p>
                   <p className="conversation-meta">{state.browserSession.accountId}</p>
                   <p className="conversation-meta">Captured {state.browserSession.capturedAtLabel}</p>
                   <p className="conversation-meta">{state.browserSession.userAgentLabel}</p>

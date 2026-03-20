@@ -11,6 +11,10 @@ import type {
   SettingValueDto,
   SyncRunDto
 } from '@mycrm/core';
+import {
+  hasImportedProfileMarker,
+  hasUsableSavedSession
+} from '@/lib/services/browser-session-service';
 
 export type ShellViewState = 'ready' | 'empty' | 'error';
 
@@ -119,6 +123,7 @@ export type ShellDataState = {
 export type BrowserSessionViewModel = {
   accountId: string;
   statusLabel: string;
+  detailLabel: string;
   capturedAtLabel: string;
   userAgentLabel: string;
 };
@@ -196,6 +201,7 @@ export function buildShellDataState(args: {
   settings?: SettingValueDto[];
   browserSession?: {
     accountId: string;
+    cookiesJson: string;
     capturedAt: number;
     userAgent?: string | null;
   } | null;
@@ -292,6 +298,7 @@ export function buildSyncRunViewModels(syncRuns: SyncRunDto[]): SyncRunViewModel
 
 export function buildBrowserSessionViewModel(session: {
   accountId: string;
+  cookiesJson: string;
   capturedAt: number;
   userAgent?: string | null;
 } | null): BrowserSessionViewModel | null {
@@ -299,9 +306,21 @@ export function buildBrowserSessionViewModel(session: {
     return null;
   }
 
+  const hasReusableSession = hasUsableSavedSession(session.cookiesJson);
+  const hasImportedMarker = hasImportedProfileMarker(session.cookiesJson);
+
   return {
     accountId: session.accountId,
-    statusLabel: 'Saved browser session ready',
+    statusLabel: hasReusableSession
+      ? 'Saved browser session ready'
+      : hasImportedMarker
+        ? 'Imported profile marker found'
+        : 'Saved browser session unavailable',
+    detailLabel: hasReusableSession
+      ? 'Reusable LinkedIn cookies are available for browser sync.'
+      : hasImportedMarker
+        ? 'An imported profile marker exists, but no reusable saved LinkedIn cookie session is available yet.'
+        : 'No reusable saved LinkedIn cookie session is available yet.',
     capturedAtLabel: formatRelativeTime(session.capturedAt),
     userAgentLabel: session.userAgent?.trim() || 'Unknown browser agent'
   };

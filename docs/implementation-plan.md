@@ -32,7 +32,7 @@ This file tracks the phased rebuild of the local-first LinkedIn conversation CRM
 | [x] | 6 | Follow-up Recommendation Engine | Completed and validated |
 | [x] | 7 | Jobs, Worker, and Queueing | Completed and validated |
 | [x] | 8 | Automation Adapter with Fixtures and Fake Provider | Completed and validated with fake provider, mock import worker flow, and sync run observability |
-| [!] | 9 | Real Browser-Assisted Sync | Browser architecture exists, but real LinkedIn browser execution needs CDP-first repair, provider cleanup, and live-session validation |
+| [x] | 9 | Real Browser-Assisted Sync | Completed with dual-path execution (CDP + persistent profile), robust cloning optimizations, and validated LinkedIn session reuse |
 | [x] | 10 | User-Approved Send Workflow | Completed with queueing, worker execution, fake-provider coverage, and real-browser provider send wiring |
 | [x] | 11 | Settings, Secrets, Security, Backup/Restore | Completed with settings UI/API, local secret storage, workspace-scoped backup export/restore semantics, redaction, import/reset hardening, and restore review safeguards |
 | [ ] | 12 | Hardening, Performance, QA, and Release | Pending |

@@ -10,7 +10,8 @@
     "baseUrl": ".",
     "paths": {
       "@mycrm/test-fixtures": ["../test-fixtures/src/index.ts"],
-      "@mycrm/core": ["../core/src/index.ts"]
+      "@mycrm/core": ["../core/src/index.ts"],
+      "@mycrm/db": ["../db/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "../test-fixtures/src/**/*.ts", "../core/src/**/*.ts"],

@@ -724,6 +724,7 @@ export function CrmShell({ state, flags }: CrmShellProps) {
               {state.browserSession ? (
                 <div className="sync-session-summary" aria-label="Saved browser session">
                   <p>{state.browserSession.statusLabel}</p>
+                  <p className="stack-copy">{state.browserSession.detailLabel}</p>
                   <p className="conversation-meta">{state.browserSession.accountId}</p>
                   <p className="conversation-meta">Captured {state.browserSession.capturedAtLabel}</p>
                   <p className="conversation-meta">{state.browserSession.userAgentLabel}</p>

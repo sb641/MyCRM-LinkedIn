@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ShellDataState } from '../../../lib/crm-shell';
 import type { InboxWorkspaceViewModel } from '../../../lib/view-models/inbox';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ vi.mock('next/navigation', () => ({
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('InboxWorkspace bulk draft flow', () => {
@@ -177,6 +178,303 @@ describe('InboxWorkspace bulk draft flow', () => {
         expect.objectContaining({ method: 'POST' })
       );
     });
+  });
+
+  it('moves a queued manual sync to completed when the worker reports a succeeded sync run', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation((handler) => {
+      void Promise.resolve().then(() => {
+        if (typeof handler === 'function') {
+          handler();
+        }
+      });
+
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    });
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const state = buildState();
+    const workspace = buildWorkspace();
+    const assignMock = vi.fn();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ jobId: 'job-123' })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          jobs: [{ job: { id: 'job-123', status: 'queued', lastError: null } }],
+          syncRuns: []
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          jobs: [{ job: { id: 'job-123', status: 'queued', lastError: null } }],
+          syncRuns: [
+            {
+              accountId: 'local-account',
+              provider: 'linkedin-browser',
+              status: 'succeeded',
+              startedAt: Date.now(),
+              error: null
+            }
+          ]
+        })
+      });
+
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('location', {
+      ...window.location,
+      assign: assignMock
+    });
+
+    render(
+      <InboxWorkspace
+        state={state}
+        workspace={workspace}
+        flags={{
+          ENABLE_AI: true,
+          ENABLE_AUTOMATION: false,
+          ENABLE_REAL_BROWSER_SYNC: false,
+          ENABLE_REAL_SEND: false
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync Conversations' })[0]);
+
+    await screen.findByText('Sync queued for job-123');
+
+    await waitFor(() => {
+      const diagnostics = screen.getByTestId('sync-diagnostics');
+      expect(screen.getByText('Sync completed')).toBeTruthy();
+      expect(screen.getByText('Sync completed. Reloading inbox data...')).toBeTruthy();
+      expect(diagnostics.textContent).toContain('latestRun=succeeded');
+      expect(screen.queryByText('Queued too long, worker may be offline')).toBeNull();
+    });
+
+    intervalSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
+  }, 10000);
+
+  it('surfaces a failed manual sync when the worker reports a failed sync run', async () => {
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval').mockImplementation((handler) => {
+      void Promise.resolve().then(() => {
+        if (typeof handler === 'function') {
+          handler();
+        }
+      });
+
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    });
+    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval').mockImplementation(() => undefined);
+    const state = buildState();
+    const workspace = buildWorkspace();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ jobId: 'job-456' })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          jobs: [{ job: { id: 'job-456', status: 'queued', lastError: null } }],
+          syncRuns: []
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          jobs: [{ job: { id: 'job-456', status: 'queued', lastError: null } }],
+          syncRuns: [
+            {
+              accountId: 'local-account',
+              provider: 'linkedin-browser',
+              status: 'failed',
+              startedAt: Date.now(),
+              error: 'Worker crashed'
+            }
+          ]
+        })
+      });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <InboxWorkspace
+        state={state}
+        workspace={workspace}
+        flags={{
+          ENABLE_AI: true,
+          ENABLE_AUTOMATION: false,
+          ENABLE_REAL_BROWSER_SYNC: false,
+          ENABLE_REAL_SEND: false
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync Conversations' })[0]);
+
+    await screen.findByText('Sync queued for job-456');
+
+    await waitFor(() => {
+      const diagnostics = screen.getByTestId('sync-diagnostics');
+      expect(screen.getByText('Sync failed')).toBeTruthy();
+      expect(screen.getByText('Sync failed: Worker crashed')).toBeTruthy();
+      expect(diagnostics.textContent).toContain('latestRun=failed');
+    });
+
+    intervalSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
+  });
+
+  it('shows readiness details when manual sync is blocked but LinkedIn credentials are configured', async () => {
+    const state = buildState();
+    const workspace = buildWorkspace();
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({
+        error: {
+          message: 'LinkedIn account credentials are configured. Sync can sign in and save a reusable browser session.'
+        },
+        details: {
+          reason: 'credentials_configured',
+          checks: {
+            enableRealBrowserSync: true,
+            hasCdpUrl: false,
+            cdpReachable: false,
+            hasUserDataDir: false,
+            hasSavedSession: false,
+            hasLinkedinCredentials: true
+          }
+        }
+      })
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <InboxWorkspace
+        state={state}
+        workspace={workspace}
+        flags={{
+          ENABLE_AI: true,
+          ENABLE_AUTOMATION: false,
+          ENABLE_REAL_BROWSER_SYNC: true,
+          ENABLE_REAL_SEND: false
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync Conversations' })[0]);
+
+    await screen.findByTestId('sync-readiness');
+    expect(screen.getByText('LinkedIn readiness')).toBeTruthy();
+    expect(screen.getByTestId('sync-readiness').textContent).toContain('hasLinkedinCredentials=true');
+  });
+
+  it('does not queue manual sync when readiness already shows browser session missing', async () => {
+    const state = buildState();
+    const workspace = buildWorkspace();
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({
+        error: {
+          message:
+            'Chrome user profile is configured, but the saved browser session only contains an imported profile marker and LinkedIn still requires login.'
+        },
+        details: {
+          reason: 'browser_session_missing',
+          checks: {
+            enableRealBrowserSync: true,
+            hasCdpUrl: false,
+            cdpReachable: false,
+            hasUserDataDir: true,
+            hasSavedSession: false,
+            hasLinkedinCredentials: false
+          }
+        }
+      })
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <InboxWorkspace
+        state={state}
+        workspace={workspace}
+        flags={{
+          ENABLE_AI: true,
+          ENABLE_AUTOMATION: false,
+          ENABLE_REAL_BROWSER_SYNC: true,
+          ENABLE_REAL_SEND: false
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Sync Conversations' })[0]);
+
+    await screen.findByTestId('sync-readiness');
+
+    const syncButton = screen.getByRole('button', { name: 'Syncing conversations...' });
+    expect(syncButton).toBeDisabled();
+
+    fireEvent.click(syncButton);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('sync-readiness').textContent).toContain(
+      'saved browser session only contains an imported profile marker'
+    );
+  });
+
+  it('bootstraps a LinkedIn session from the inbox action', async () => {
+    const state = buildState();
+    const workspace = buildWorkspace();
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        accountId: 'local-account',
+        capturedAt: 1735689600000,
+        userAgent: 'test-agent',
+        readiness: {
+          accountId: 'local-account',
+          ready: true,
+          reason: 'session_available',
+          message: 'Saved LinkedIn session found.',
+          checks: {
+            enableRealBrowserSync: true,
+            hasCdpUrl: false,
+            cdpReachable: false,
+            hasUserDataDir: false,
+            hasSavedSession: true,
+            hasLinkedinCredentials: true
+          }
+        }
+      })
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <InboxWorkspace
+        state={state}
+        workspace={workspace}
+        flags={{
+          ENABLE_AI: true,
+          ENABLE_AUTOMATION: false,
+          ENABLE_REAL_BROWSER_SYNC: true,
+          ENABLE_REAL_SEND: false
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Login and save session' }));
+
+    await screen.findByText('LinkedIn session saved for local-account. You can start sync now.');
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/browser-session?mode=bootstrap',
+      expect.objectContaining({ method: 'POST' })
+    );
   });
 });
 
