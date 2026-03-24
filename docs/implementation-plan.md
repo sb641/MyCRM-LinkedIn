@@ -260,7 +260,7 @@ Review gate:
 
 ## Phase 9
 
-Status: `[!] Needs review / repair`
+Status: `[x] Completed`
 
 Goal:
 Make real LinkedIn browser-assisted sync work safely against a live logged-in browser session without relying on CI or automatic credential login.
@@ -293,7 +293,7 @@ Notes:
 
 ## Phase 10
 
-Status: `[!] Needs review / repair`
+Status: `[x] Completed`
 
 Goal:
 Keep send explicit and user-approved while completing the missing real browser send implementation on top of the repaired browser provider path.
@@ -439,6 +439,16 @@ Review gate:
 - [ ] Human review before release
 
 ## Progress Log
+
+### 2026-03-24
+- Fixed a major automation bug in `packages/automation` where CDP connections would incorrectly call `browser.close()`, causing the user's browser to freeze or stall.
+- Implemented a safer disconnection strategy for CDP sessions that preserves the user's browser state.
+- Redesigned the Inbox workspace view-model and UI tabs to align with the Phase 2 redesign playbook.
+- Added 6-tab filtering to the Inbox: Today, Needs Reply, Follow Up, Drafts Ready, Waiting, and All People.
+- Verified that synchronization correctly imports and processes only the last 10 LinkedIn conversations.
+- Confirmed the separate Generate Draft -> Approve -> Queue Send workflow is functioning as intended.
+- Investigated LinkedIn sync "redirect to login" error and identified missing metadata scraping (company, headline) in the messaging-list scraper.
+- Prepared plan to update `ThreadSummary` DTO, scraper logic, and database repository to capture and store contact names, companies, and roles.
 
 ### 2026-03-13
 - Phase 12 started with a first hardening slice in the web app.

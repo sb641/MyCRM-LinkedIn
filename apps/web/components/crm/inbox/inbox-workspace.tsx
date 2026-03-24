@@ -1060,9 +1060,11 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
               ))}
             </div>
             <div className="chip-row inbox-summary-chips" aria-label="Inbox workspace summary">
+              <span className="subtle-pill">Today {workspace.summary.todayCount}</span>
               <span className="subtle-pill">Needs reply {workspace.summary.needsReplyCount}</span>
               <span className="subtle-pill">Drafts {workspace.summary.draftCount}</span>
               <span className="subtle-pill">Follow-ups {workspace.summary.followUpCount}</span>
+              <span className="subtle-pill">Waiting {workspace.summary.waitingCount}</span>
             </div>
           </div>
         </section>
@@ -1087,7 +1089,7 @@ export function InboxWorkspace({ state, workspace, flags }: InboxWorkspaceProps)
 
             <div className="inbox-list-controls" aria-label="Queue controls">
               <div className="inbox-list-controls-row">
-                <span className="subtle-pill">{workspace.activeQueue}</span>
+                <span className="subtle-pill">{workspace.activeQueue.replace(/-/g, ' ')}</span>
                 <span className="subtle-pill">Sort {state.sort}</span>
               </div>
               <div className="inbox-list-controls-row inbox-list-controls-row-scroll" aria-label="Active filters">

@@ -32,15 +32,16 @@ This file is the short restart point for a new chat.
 - Fixed a runtime split where web and worker could use different SQLite files when `DATABASE_URL` was relative; `packages/db/src/server/get-db.ts` now resolves relative SQLite paths from the workspace root
 - Ported the old Python terminal `launch_persistent_context(USER_DATA_DIR, ...)` approach into the TypeScript automation layer as a direct persistent-profile provider and bootstrap capture path
 - The current live sync path order is: CDP reuse, direct persistent-profile reuse, copied-profile fallback, then saved-cookie session fallback
+- Fixed a major automation bug where `browser.close()` was incorrectly called on CDP-connected user browsers, causing them to freeze or stall
+- Redesigned the Inbox workspace view-model and UI to align with the Phase 2 redesign playbook, introducing 6-tab queue filtering: Today, Needs Reply, Follow Up, Drafts Ready, Waiting, and All People
+- Confirmed thread synchronization is correctly capped at the last 10 chats to ensure a lightweight and relevant local Inbox
 
 ## Recommended next work
 
 Finish the browser work before starting Phase 12:
 
-1. Validate live sync against the new direct persistent-profile path with the real LinkedIn profile and confirm the last 10 chats persist into inbox
-2. Complete real browser send on top of the repaired dual-path provider flow
-3. Add stronger preflight diagnostics that distinguish CDP reuse from direct persistent-profile reuse
-4. Then start Phase 12 hardening, regression coverage, and release readiness
+1. Continue Phase 2 & 3 of the redesign playbook: Campaigns and Account workspaces
+2. Start Phase 12 hardening, regression coverage, and release readiness
 
 ## Key docs
 

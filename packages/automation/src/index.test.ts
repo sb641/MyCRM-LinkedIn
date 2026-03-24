@@ -11,6 +11,8 @@ describe('selectThreadsForImport', () => {
 				id: `thread-${index + 1}`,
 				title: `Thread ${index + 1}`,
 				participantName: `Participant ${index + 1}`,
+				company: null,
+				headline: null,
 				snippet: `Snippet ${index + 1}`,
 				unreadCount: 0,
 				lastMessageAt: 12 - index

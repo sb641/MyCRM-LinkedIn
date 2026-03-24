@@ -1447,6 +1447,8 @@ export function createMutationRepository(db: RepositoryDbClient, sqlite: Reposit
         id: string;
         title: string;
         participantName: string;
+        company: string | null;
+        headline: string | null;
         snippet: string;
         unreadCount: number;
         lastMessageAt: number;
@@ -1520,9 +1522,9 @@ export function createMutationRepository(db: RepositoryDbClient, sqlite: Reposit
           ) VALUES (
             '${contactId.replace(/'/g, "''")}',
             '${safeParticipantName || safeTitle || 'LinkedIn Contact'}',
-            NULL,
-            NULL,
-            NULL,
+            ${thread.company ? `'${thread.company.trim().replace(/'/g, "''")}'` : 'NULL'},
+            ${thread.headline ? `'${thread.headline.trim().replace(/'/g, "''")}'` : 'NULL'},
+            ${thread.headline ? `'${thread.headline.trim().replace(/'/g, "''")}'` : 'NULL'},
             NULL,
             '${safeLinkedinProfileId}',
             '${safeAccountId}',
@@ -1540,6 +1542,9 @@ export function createMutationRepository(db: RepositoryDbClient, sqlite: Reposit
           )
           ON CONFLICT(id) DO UPDATE SET
             name = excluded.name,
+            company = COALESCE(excluded.company, contacts.company),
+            position = COALESCE(excluded.position, contacts.position),
+            headline = COALESCE(excluded.headline, contacts.headline),
             linkedin_profile_id = excluded.linkedin_profile_id,
             account_id = excluded.account_id,
             last_interaction_at = excluded.last_interaction_at,

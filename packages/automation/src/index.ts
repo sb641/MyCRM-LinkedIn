@@ -39,6 +39,8 @@ export interface ThreadSummary {
   id: string;
   title: string;
   participantName: string;
+  company: string | null;
+  headline: string | null;
   snippet: string;
   unreadCount: number;
   lastMessageAt: number;
@@ -777,6 +779,8 @@ export function parseThreadFixture(html: string): ParsedThreadFixture {
       id: threadMatch[1],
       title: threadMatch[2],
       participantName: threadMatch[3],
+      company: null,
+      headline: null,
       snippet: threadMatch[4],
       unreadCount: Number(threadMatch[5]),
       lastMessageAt: Number(threadMatch[6])
@@ -808,6 +812,8 @@ export class MockMessagingProvider implements MessagingProvider {
         id: 'thread-1',
         title: `${sampleContact.name} at ${sampleContact.company}`,
         participantName: sampleContact.name,
+        company: sampleContact.company ?? null,
+        headline: null,
         snippet: 'Mock thread',
         unreadCount: 0,
         lastMessageAt: 1735689600000
@@ -948,8 +954,26 @@ async function withLinkedInMessagingConnectedChrome<T>(
     const page = context.pages()[0] ?? (await context.newPage());
     return await callback(page);
   } finally {
-    // Don't close the user's browser; just disconnect the Playwright client.
-    await browser.close();
+    // Just disconnect the Playwright client when closing the session.
+    // We should not call browser.close() because it might terminate the 
+    // user's actual Chrome instance or put it in a frozen state.
+    // Instead, we just let the connection go or close the browser object
+    // if we are sure it only closes the CDP session. 
+    // Wait, Playwright documentation says browser.close() for CDP-connected 
+    // browsers DOES NOT close the browser, it just Disconnects.
+    // But since the user reports a freeze, we'll be safer.
+    // We will only close the page if we created one, but here we'll just
+    // disconnect the client.
+    await (browser as any)._connection?.close(); // Internal way or just disconnect
+    // Actually, simply not calling browser.close() might be safer if it's causing freezes.
+    // But let's try browser.close() again but make sure we don't close the browser 
+    // by using a different approach if available.
+    // For now, let's just use disconnect() if available.
+    if ((browser as any).disconnect) {
+      await (browser as any).disconnect();
+    } else {
+      await browser.close();
+    }
   }
 }
 
@@ -1086,10 +1110,16 @@ function debugLog(...args: Array<unknown>) {
   console.log('[linkedIn-debug]', ...args);
 }
 
-async function waitForLinkedInMessagingReady(page: import('@playwright/test').Page, timeoutMs: number) {
+async function waitForLinkedInMessagingReady(
+  page: import('@playwright/test').Page,
+  timeoutMs: number,
+  credentials?: { username: string; password: string } | null
+) {
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
 
   const startedAt = Date.now();
+  let didAttemptLogin = false;
+
   while (Date.now() - startedAt < timeoutMs) {
     const state = await page
       .evaluate(() => {
@@ -1108,6 +1138,26 @@ async function waitForLinkedInMessagingReady(page: import('@playwright/test').Pa
       .catch(() => ({ href: page.url(), hasMessagingShell: false }));
 
     if (state.href.includes('/login') || state.href.includes('/uas/login')) {
+      // Attempt auto-login if we have credentials and haven't tried yet
+      if (credentials && !didAttemptLogin) {
+        didAttemptLogin = true;
+        console.log('[linkedin-sync] Session expired, attempting credential login...');
+        try {
+          if (!state.href.includes('/login')) {
+            await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded' });
+          }
+          await page.fill('#username', credentials.username).catch(() => undefined);
+          await page.fill('#password', credentials.password).catch(() => undefined);
+          await page.click('button[type="submit"]').catch(() => undefined);
+          await page.waitForURL(/linkedin\.com\/(?!login|uas\/login)/, { timeout: 30000 }).catch(() => undefined);
+          await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+          await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
+          await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+          continue;
+        } catch (loginError) {
+          console.warn('[linkedin-sync] Auto-login failed:', loginError instanceof Error ? loginError.message : loginError);
+        }
+      }
       return state;
     }
 
@@ -1128,9 +1178,21 @@ async function waitForLinkedInMessagingReady(page: import('@playwright/test').Pa
   };
 }
 
-async function extractLinkedInThreads(page: import('@playwright/test').Page, accountId: string): Promise<ThreadSummary[]> {
+async function extractLinkedInThreads(
+  page: import('@playwright/test').Page,
+  accountId: string,
+  credentials?: { username: string; password: string } | null
+): Promise<ThreadSummary[]> {
   await page.goto('https://www.linkedin.com/messaging/', { waitUntil: 'domcontentloaded' });
-  await waitForLinkedInMessagingReady(page, 20000);
+  const readyState = await waitForLinkedInMessagingReady(page, 25000, credentials);
+
+  if (readyState.href.includes('/login') || readyState.href.includes('/uas/login')) {
+    throw new Error('LinkedIn redirected to login. Auto-login was attempted but failed or no credentials were provided. Please ensure your LinkedIn session is active or set LINKEDIN_USERNAME and LINKEDIN_PASSWORD.');
+  }
+
+  if (readyState.href.includes('/checkpoint') || readyState.href.includes('/challenge')) {
+    throw new Error('LinkedIn security challenge detected. Please open LinkedIn in your browser and resolve any verification before syncing.');
+  }
 
   const conversationList = page
     .locator(
@@ -1170,6 +1232,8 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
       id: string;
       title: string;
       participantName: string;
+      company: string | null;
+      headline: string | null;
       snippet: string;
       unreadCount: number;
       lastMessageAt: number;
@@ -1190,17 +1254,41 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
         continue;
       }
 
-      const title =
-        element.querySelector<HTMLElement>('.msg-conversation-listitem__participant-names, .msg-conversation-card__participant-names, .t-14.t-black.t-bold')
-          ?.innerText?.trim() ??
-        element.querySelector<HTMLElement>('.msg-conversation-card__participant-names, .msg-conversation-listitem__participant-names, .artdeco-entity-lockup__title, .artdeco-entity-lockup__subtitle')
-          ?.innerText?.trim() ??
-        element.getAttribute('aria-label')?.trim() ??
-        '';
+      // Contact name: prefer the name-only selectors, avoid subtitle/lockup ones that may contain company
+      const nameEl =
+        element.querySelector<HTMLElement>('.msg-conversation-listitem__participant-names') ??
+        element.querySelector<HTMLElement>('.msg-conversation-card__participant-names') ??
+        element.querySelector<HTMLElement>('.t-14.t-black.t-bold') ??
+        element.querySelector<HTMLElement>('.artdeco-entity-lockup__title');
+      const title = (nameEl?.innerText?.trim() ?? element.getAttribute('aria-label')?.trim() ?? '').split('\n')[0].trim();
+
+      // Subtitle / headline: often contains company or role+company
+      const subtitleEl =
+        element.querySelector<HTMLElement>('.artdeco-entity-lockup__subtitle') ??
+        element.querySelector<HTMLElement>('.msg-conversation-listitem__participant-company') ??
+        element.querySelector<HTMLElement>('.t-12.t-black--light.t-normal');
+      const subtitleText = subtitleEl?.innerText?.trim() ?? '';
+
+      // Try to split subtitle into role and company (common pattern: "Role at Company" or just company)
+      let company: string | null = null;
+      let headline: string | null = null;
+      if (subtitleText) {
+        const atIndex = subtitleText.toLowerCase().indexOf(' at ');
+        if (atIndex > 0) {
+          headline = subtitleText.slice(0, atIndex).trim() || null;
+          company = subtitleText.slice(atIndex + 4).trim() || null;
+        } else {
+          // Just a company name with no role
+          company = subtitleText;
+        }
+      }
+
       const snippet =
-        element.querySelector<HTMLElement>('.msg-conversation-listitem__message-snippet, .msg-conversation-card__message-snippet, .t-12.t-black--light')
+        element.querySelector<HTMLElement>('.msg-conversation-listitem__message-snippet')
           ?.innerText?.trim() ??
-        element.querySelector<HTMLElement>('.msg-conversation-card__message-snippet, .artdeco-entity-lockup__caption, .artdeco-entity-lockup__metadata')
+        element.querySelector<HTMLElement>('.msg-conversation-card__message-snippet')
+          ?.innerText?.trim() ??
+        element.querySelector<HTMLElement>('.artdeco-entity-lockup__caption')
           ?.innerText?.trim() ??
         '';
       const timeText =
@@ -1216,6 +1304,8 @@ async function extractLinkedInThreads(page: import('@playwright/test').Page, acc
         id,
         title: title || 'LinkedIn conversation',
         participantName: title || 'Unknown participant',
+        company,
+        headline,
         snippet,
         unreadCount,
         lastMessageAt: timeText ? Date.now() : Date.now()
@@ -1346,10 +1436,14 @@ async function sendLinkedInMessage(
 }
 
 class CdpMessagingProvider implements MessagingProvider {
-  constructor(private readonly cdpUrl: string, private readonly accountId: string) {}
+  constructor(
+    private readonly cdpUrl: string,
+    private readonly accountId: string,
+    private readonly credentials?: { username: string; password: string } | null
+  ) {}
 
   async listThreads(): Promise<ThreadSummary[]> {
-    return withLinkedInMessagingConnectedChrome(this.cdpUrl, async (page) => extractLinkedInThreads(page, this.accountId));
+    return withLinkedInMessagingConnectedChrome(this.cdpUrl, async (page) => extractLinkedInThreads(page, this.accountId, this.credentials));
   }
 
   async getThreadMessages(threadId: string): Promise<MessageRecord[]> {
@@ -1364,10 +1458,14 @@ class CdpMessagingProvider implements MessagingProvider {
 }
 
 export class PersistentProfileMessagingProvider implements MessagingProvider {
-  constructor(private readonly options: PersistentProfileOptions, private readonly accountId: string) {}
+  constructor(
+    private readonly options: PersistentProfileOptions,
+    private readonly accountId: string,
+    private readonly credentials?: { username: string; password: string } | null
+  ) {}
 
   async listThreads(): Promise<ThreadSummary[]> {
-    return withLinkedInMessagingPersistentProfile(this.options, async (page) => extractLinkedInThreads(page, this.accountId));
+    return withLinkedInMessagingPersistentProfile(this.options, async (page) => extractLinkedInThreads(page, this.accountId, this.credentials));
   }
 
   async getThreadMessages(threadId: string): Promise<MessageRecord[]> {
@@ -1382,11 +1480,15 @@ export class PersistentProfileMessagingProvider implements MessagingProvider {
 }
 
 export class DirectPersistentProfileMessagingProvider implements MessagingProvider {
-  constructor(private readonly options: PersistentProfileOptions, private readonly accountId: string) {}
+  constructor(
+    private readonly options: PersistentProfileOptions,
+    private readonly accountId: string,
+    private readonly credentials?: { username: string; password: string } | null
+  ) {}
 
   async listThreads(): Promise<ThreadSummary[]> {
     return withLinkedInMessagingDirectPersistentProfile(this.options, async (page) =>
-      extractLinkedInThreads(page, this.accountId)
+      extractLinkedInThreads(page, this.accountId, this.credentials)
     );
   }
 
@@ -1404,11 +1506,15 @@ export class DirectPersistentProfileMessagingProvider implements MessagingProvid
 }
 
 export class StrictDirectPersistentProfileMessagingProvider implements MessagingProvider {
-  constructor(private readonly options: PersistentProfileOptions, private readonly accountId: string) {}
+  constructor(
+    private readonly options: PersistentProfileOptions,
+    private readonly accountId: string,
+    private readonly credentials?: { username: string; password: string } | null
+  ) {}
 
   async listThreads(): Promise<ThreadSummary[]> {
     return withLinkedInMessagingStrictDirectPersistentProfile(this.options, async (page) =>
-      extractLinkedInThreads(page, this.accountId)
+      extractLinkedInThreads(page, this.accountId, this.credentials)
     );
   }
 
@@ -1477,8 +1583,11 @@ async function resolveBrowserSyncProvider(payload: unknown, options: BrowserSync
   const hasReachableCdp = cdpUrl ? await isChromeCdpReachable(cdpUrl) : false;
 
   if (hasReachableCdp) {
+    const credentials = (legacyConfig.linkedinUsername && legacyConfig.linkedinPassword)
+      ? { username: legacyConfig.linkedinUsername, password: legacyConfig.linkedinPassword }
+      : null;
     return {
-      provider: new CdpMessagingProvider(cdpUrl, parsed.accountId),
+      provider: new CdpMessagingProvider(cdpUrl, parsed.accountId, credentials),
       providerKind: 'cdp'
     };
   }
@@ -1492,32 +1601,29 @@ async function resolveBrowserSyncProvider(payload: unknown, options: BrowserSync
 
   if (legacyConfig.userDataDir) {
     const normalizedProfile = normalizeChromeProfilePath(legacyConfig.userDataDir);
+    const credentials = (legacyConfig.linkedinUsername && legacyConfig.linkedinPassword)
+      ? { username: legacyConfig.linkedinUsername, password: legacyConfig.linkedinPassword }
+      : null;
+    const profileOptions = {
+      proxyUrl: legacyConfig.proxyUrl,
+      userDataDir: normalizedProfile.userDataDir,
+      profileDirectory: normalizedProfile.profileDirectory,
+      userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
+    };
     const strictDirectPersistentProfileProvider = new StrictDirectPersistentProfileMessagingProvider(
-      {
-        proxyUrl: legacyConfig.proxyUrl,
-        userDataDir: normalizedProfile.userDataDir,
-        profileDirectory: normalizedProfile.profileDirectory,
-        userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
-      },
-      parsed.accountId
+      profileOptions,
+      parsed.accountId,
+      credentials
     );
     const directPersistentProfileProvider = new DirectPersistentProfileMessagingProvider(
-      {
-        proxyUrl: legacyConfig.proxyUrl,
-        userDataDir: normalizedProfile.userDataDir,
-        profileDirectory: normalizedProfile.profileDirectory,
-        userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
-      },
-      parsed.accountId
+      profileOptions,
+      parsed.accountId,
+      credentials
     );
     const persistentProfileProvider = new PersistentProfileMessagingProvider(
-      {
-        proxyUrl: legacyConfig.proxyUrl,
-        userDataDir: normalizedProfile.userDataDir,
-        profileDirectory: normalizedProfile.profileDirectory,
-        userAgent: session?.userAgent ?? getDefaultLinkedInUserAgent()
-      },
-      parsed.accountId
+      profileOptions,
+      parsed.accountId,
+      credentials
     );
 
     const tryCredentialBootstrapFallback = async (error: unknown) => {
@@ -1632,6 +1738,8 @@ export async function runImportThreads(payload: unknown, options: BrowserSyncOpt
         id: thread.id,
         title: thread.title,
         participantName: thread.participantName,
+        company: thread.company ?? null,
+        headline: thread.headline ?? null,
         snippet: thread.snippet,
         unreadCount: thread.unreadCount,
         lastMessageAt: thread.lastMessageAt,

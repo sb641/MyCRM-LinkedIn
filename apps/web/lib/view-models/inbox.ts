@@ -6,7 +6,7 @@ import type {
   ShellDataState
 } from '@/lib/crm-shell';
 
-export type InboxQueueKey = 'all' | 'needs-reply' | 'drafts' | 'follow-ups';
+export type InboxQueueKey = 'today' | 'needs-reply' | 'follow-up' | 'drafts-ready' | 'waiting' | 'all';
 export type InboxEntityMode = 'people' | 'accounts';
 
 export type InboxQueueTab = {
@@ -40,6 +40,8 @@ export type InboxWorkspaceViewModel = {
     needsReplyCount: number;
     draftCount: number;
     followUpCount: number;
+    todayCount: number;
+    waitingCount: number;
   };
 };
 
@@ -86,28 +88,32 @@ export function buildInboxWorkspaceViewModel(
       totalAccounts: state.accounts.length,
       visibleAccounts: visibleAccounts.length,
       needsReplyCount: countQueueItems(state.inbox, 'needs-reply'),
-      draftCount: countQueueItems(state.inbox, 'drafts'),
-      followUpCount: countQueueItems(state.inbox, 'follow-ups')
+      draftCount: countQueueItems(state.inbox, 'drafts-ready'),
+      followUpCount: countQueueItems(state.inbox, 'follow-up'),
+      todayCount: countQueueItems(state.inbox, 'today'),
+      waitingCount: countQueueItems(state.inbox, 'waiting')
     }
   };
 }
 
 function buildQueueTabs(items: InboxListItemViewModel[], activeQueue: InboxQueueKey): InboxQueueTab[] {
   return [
-    { key: 'all', label: 'All', count: items.length, isActive: activeQueue === 'all' },
+    { key: 'today', label: 'Today', count: countQueueItems(items, 'today'), isActive: activeQueue === 'today' },
     {
       key: 'needs-reply',
       label: 'Needs reply',
       count: countQueueItems(items, 'needs-reply'),
       isActive: activeQueue === 'needs-reply'
     },
-    { key: 'drafts', label: 'Drafts', count: countQueueItems(items, 'drafts'), isActive: activeQueue === 'drafts' },
+    { key: 'follow-up', label: 'Follow up', count: countQueueItems(items, 'follow-up'), isActive: activeQueue === 'follow-up' },
     {
-      key: 'follow-ups',
-      label: 'Follow-ups',
-      count: countQueueItems(items, 'follow-ups'),
-      isActive: activeQueue === 'follow-ups'
-    }
+      key: 'drafts-ready',
+      label: 'Drafts ready',
+      count: countQueueItems(items, 'drafts-ready'),
+      isActive: activeQueue === 'drafts-ready'
+    },
+    { key: 'waiting', label: 'Waiting', count: countQueueItems(items, 'waiting'), isActive: activeQueue === 'waiting' },
+    { key: 'all', label: 'All People', count: items.length, isActive: activeQueue === 'all' }
   ];
 }
 
@@ -124,15 +130,29 @@ function filterInboxItems(items: InboxListItemViewModel[], queue: InboxQueueKey)
 }
 
 function matchesQueue(item: InboxListItemViewModel, queue: Exclude<InboxQueueKey, 'all'>) {
+  if (queue === 'today') {
+    // Today: items with reminders for today or recently unread
+    const today = new Date().setHours(0, 0, 0, 0);
+    return (item.nextReminderAt && item.nextReminderAt <= Date.now()) || item.unreadCount > 0;
+  }
+
   if (queue === 'needs-reply') {
     return item.relationshipStatus === 'awaiting_reply' || item.unreadCount > 0;
   }
 
-  if (queue === 'drafts') {
-    return item.draftStatus === 'generated' || item.draftStatus === 'approved';
+  if (queue === 'drafts-ready') {
+    return item.draftStatus === 'approved';
   }
 
-  return item.relationshipStatus === 'followup_due' || item.nextReminderAt !== null;
+  if (queue === 'follow-up') {
+    return item.relationshipStatus === 'followup_due' || (item.nextReminderAt !== null && item.nextReminderAt > Date.now());
+  }
+
+  if (queue === 'waiting') {
+    return item.relationshipStatus === 'waiting';
+  }
+
+  return false;
 }
 
 function buildFilterChips(state: ShellDataState, entityMode: InboxEntityMode): InboxFilterChip[] {
@@ -165,7 +185,13 @@ function formatSortLabel(sort: ShellDataState['sort']) {
 }
 
 function getQueueKey(value: string | null | undefined): InboxQueueKey {
-  if (value === 'needs-reply' || value === 'drafts' || value === 'follow-ups') {
+  if (
+    value === 'today' ||
+    value === 'needs-reply' ||
+    value === 'follow-up' ||
+    value === 'drafts-ready' ||
+    value === 'waiting'
+  ) {
     return value;
   }
 

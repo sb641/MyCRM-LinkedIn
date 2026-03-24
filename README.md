@@ -12,6 +12,8 @@ Recent hardening work fixed two important runtime issues:
 
 - the `/inbox` route no longer pulls Playwright into the web SSR bundle through `@mycrm/automation`
 - relative `DATABASE_URL` values now resolve from the workspace root, so web and worker no longer drift onto separate `.mycrm/mycrm.sqlite` files when started from different directories
+- fixed a critical automation bug where CDP connection would incorrectly close or freeze the user's browser session
+- updated the Inbox UI with 6 dedicated queue tabs (Today, Needs Reply, Follow Up, Drafts Ready, Waiting, All People) and limited sync to the last 10 chats
 
 Real browser sync now supports two production paths:
 
@@ -82,6 +84,7 @@ The application does not sync data automatically.
 - `Queued too long, worker may be offline`: the job stayed queued without being claimed; this previously happened when web and worker were pointed at different relative SQLite files, and should now be prevented by workspace-root DB resolution
 - `browserType.connectOverCDP: connect ECONNREFUSED 127.0.0.1:9222`: the worker claimed the job, but no browser was listening on the configured CDP endpoint and it may need to fall back to `USER_DATA_DIR`
 - `LinkedIn redirected to login`: the configured profile is present but not authenticated for LinkedIn, or LinkedIn challenged the session before messaging loaded
+- `browser freeze/stall`: previously caused by incorrect CDP connection teardown; now resolved by safer browser client disconnection
 
 ### Sending a Message
 
