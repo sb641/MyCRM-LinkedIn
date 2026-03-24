@@ -43,8 +43,6 @@ Primary progress tracker: `docs/implementation-plan.md`
 
     It installs dependencies if needed, ensures the local runtime flags are enabled, starts the web app and worker in separate windows, and opens the app in the browser.
 
-    When you are done testing, stop both launcher windows so the web app and worker are not left running in the background.
-
 4.  **Choose a browser reuse mode:**
     - **CDP reuse:** attach to your already-open LinkedIn browser.
     Start Chrome with remote debugging enabled so Playwright can connect over CDP.
@@ -181,13 +179,6 @@ GEMINI_API_KEY=
 - If sync jobs remain queued, make sure you do not have stale web or worker processes started from other directories.
 - If needed, stop all Node processes for this repo and restart from the repo root so both services share the same runtime and database.
 
-### Test Session Cleanup
-
-- After any manual browser-sync test, close the repo's web and worker terminals or stop the processes they started.
-- If you launched Chrome only for CDP reuse testing, close that Chrome instance when the test is finished.
-- Before starting another validation pass, make sure you do not still have stale app, worker, or Playwright-driven browser sessions from the previous run.
-- If the app behaves inconsistently after repeated runs, stop all repo-related Node processes and restart from the repo root.
-
 ## How to Test
 
 -   **Run all tests:**
@@ -205,9 +196,6 @@ GEMINI_API_KEY=
     ```bash
     pnpm --filter @mycrm/web test:e2e:run
     ```
-
--   **After tests finish:**
-    Stop any web app, worker, or browser sessions that were started only for the test run. Do not leave test sessions running between validation passes.
 
 ## Legacy Code
 The previous Python implementation is still present in the root for migration reference. Its direct persistent Chrome profile logic has now been ported into the TypeScript automation layer as a secondary production path, while the newer CDP/session-based architecture remains in place.
