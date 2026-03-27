@@ -23,3 +23,8 @@ token_linkedin.pickle
 .mycrm/
 apps/web/.mycrm/
 packages/db/.mycrm/
+.e2e/
+tmp/
+temp_cloned_cookies/
+temp_cloned_cookies2/
+temp_prof1_cookies/

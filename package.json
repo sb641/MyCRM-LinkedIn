@@ -4,6 +4,8 @@
   "packageManager": "pnpm@10.6.3",
   "scripts": {
     "build": "pnpm -r build",
+    "clean": "node scripts/clean-workspace.mjs",
+    "clean:all": "node scripts/clean-workspace.mjs --include-runtime-data",
     "db:generate": "pnpm --filter @mycrm/db db:generate",
     "db:migrate": "pnpm --filter @mycrm/db db:migrate",
     "db:seed": "pnpm --filter @mycrm/db db:seed",

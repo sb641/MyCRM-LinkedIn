@@ -165,9 +165,19 @@ GEMINI_API_KEY=
 -   `start-app.bat`: Start the working local app with web and worker in separate windows.
 -   `pnpm dev:web`: Run only the web app.
 -   `pnpm dev:worker`: Run only the worker.
+-   `pnpm clean`: Remove reproducible local build, test, and browser-clone artifacts.
+-   `pnpm clean:all`: Also remove `.mycrm/` runtime data, including the local SQLite DB, logs, secrets, and saved sessions.
 -   `pnpm lint`: Run ESLint.
 -   `pnpm typecheck`: Run TypeScript compiler.
 -   `pnpm build`: Build all apps and packages.
+
+### Disk Cleanup
+
+If the repo grows unexpectedly on disk, the usual causes are `node_modules/`, Next.js build output, Playwright test artifacts, and temporary Chrome profile clones created for browser automation.
+
+-   Run `pnpm clean` to remove safe-to-regenerate artifacts such as `.next/`, `test-results/`, `playwright-report/`, `.e2e/`, and temporary cloned browser profile folders.
+-   Run `pnpm clean:all` only when you intentionally want to reset local runtime state as well. This also deletes `.mycrm/`, which removes the local database, logs, secrets, and saved browser sessions.
+-   If you still need more space after that, remove `node_modules/` and reinstall with `pnpm install` when needed.
 
 ### Browser Sync Troubleshooting
 
